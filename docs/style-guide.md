@@ -46,9 +46,11 @@ sh tools/check.sh
 ```
 
 The command runs regression tests of the gate and then audits the real checkout.
-GitHub Actions runs the same command on pushes and pull requests. It currently
-requires only Python 3 and Git; no GUI, GPU, network, or Rust build is needed by
-the local gate.
+GitHub Actions runs the same command on pushes and pull requests. A Rust
+integration test also runs the real audit, so ordinary `cargo test` includes
+the length check. The source-length portion requires only Python 3 and Git. The complete gate also uses the Rust
+toolchain pinned in `rust-toolchain.toml`; it opens no GUI, GPU, or display
+connection. Dependency and toolchain installation may require network access.
 
 The audit scans Git-tracked and unignored untracked working-tree source files,
 including root `src`, workspace crates, examples, build scripts, tooling, and
@@ -153,17 +155,20 @@ diagnostics and use cumulative counts so saturation does not also flood logs.
 ## Formatting, warnings, and validation
 
 Rust changes must pass formatting, compiler checks, tests, and Clippy without
-warnings. Once a Cargo workspace exists, the required commands are:
+warnings. `tools/check.sh` runs these commands with compiler and rustdoc
+warnings denied:
 
 ```sh
 cargo fmt --all -- --check
 cargo test --workspace --all-targets --locked
+cargo test --workspace --doc --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-Feature-specific checks must be added when those features exist. These commands
-are not wired into today's gate because Lom has no Cargo manifest or Rust
-implementation yet; wire them into `tools/check.sh` with the first Rust code.
+Feature-specific checks must be added when those features exist. Rust tests
+remain outside `src/`; the current CLI tests execute without a session
+environment. Keep `rust-toolchain.toml`, the package minimum Rust version, and
+the CI toolchain installation aligned when upgrading.
 
 Fix warnings first. If a lint is inapplicable at one site, use
 `#[expect(lint, reason = "...")]` where supported, so a stale suppression is

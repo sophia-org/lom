@@ -8,12 +8,14 @@ permissions:
   contents: read
 
 jobs:
-  source-layout:
+  offline-checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Test the source-layout gate and audit the checkout
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.96.1 --profile minimal --component rustfmt --component clippy
+      - name: Check source layout, formatting, tests, and Clippy
         run: sh tools/check.sh

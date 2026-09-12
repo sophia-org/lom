@@ -1,0 +1,12 @@
+[package]
+name = "lom"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96.1"
+description = "A native Sophia desktop shell inspired by ironbar"
+license = "BSD-3-Clause"
+repository = "https://github.com/sophia-org/lom"
+publish = false
+
+[lints.rust]
+missing_docs = "warn"

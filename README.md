@@ -12,8 +12,8 @@ promised.
 
 ## Status
 
-Project foundation only. There is no runnable shell, native acceptance result,
-or build command yet.
+Buildable project scaffold only. The CLI supports help and version output;
+native shell startup, the GUI, and the renderer are not implemented or accepted.
 
 The chosen UI direction is Xilem's reactive layer through `xilem_masonry`,
 Masonry widgets, Parley/Fontique text support, and Vello GPU rendering through
@@ -72,15 +72,31 @@ The protocol must remain independently implementable and renderer-independent.
 ## Development
 
 Follow the [style guide](docs/style-guide.md), adapted from Sophia, and the
-[architecture](ARCHITECTURE.md). Run the source-layout gate and its regression
-tests with:
+[architecture](ARCHITECTURE.md). The Rust toolchain is pinned in
+`rust-toolchain.toml`. Run the complete offline code gate with:
 
 ```sh
 sh tools/check.sh
 ```
 
 Production sources are reviewed at 800 lines and rejected above 1,000 lines.
-Large tests are reported for review. The same gate runs in GitHub Actions.
+Large tests are reported for review. The gate also runs formatting, CLI tests,
+doc tests, and Clippy with warnings denied. The same gate runs in GitHub Actions.
+
+```sh
+cargo build --locked
+cargo run --locked -- --help
+cargo run --locked -- --version
+```
+
+Running `lom` without arguments deliberately exits with status 2 and explains
+that native shell startup is unavailable. These commands do not connect to
+Sophia or a display or initialize a GPU.
+
+The library has documented stubs for `model`, `update`, `modules`, `protocol`,
+`runtime`, `ui`, and `render`. No toolkit dependencies or wire records have been
+invented for the scaffold; pinning Xilem/Masonry and Vello belongs to the first
+feasibility milestone.
 
 ## License
 
