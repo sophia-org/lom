@@ -6,3 +6,6 @@
 //! admitted Sophia design; this scaffold defines no wire records.
 //!
 //! No protocol connection or negotiation is implemented yet.
+
+mod pixels;
+pub use pixels::{ContentPixels, PixelChunk, PixelChunks};

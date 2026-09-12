@@ -260,9 +260,11 @@ across disconnect or device loss. Importing a buffer or observing an acquire
 fence alone does not prevent a producer from modifying accepted content.
 
 Do not assign new wire kinds, capabilities, or file-descriptor semantics here.
-A prototype may measure GPU rendering followed by readback and CPU-byte
-transfer, explicitly accounting for the readback and upload costs. That is not
-the assumed final transport. CPU rendering is not a silent production fallback.
+The operator selected GPU rendering followed by bounded readback and CPU-byte
+transfer for the first native prototype. Account for readback, copies and Engine
+upload explicitly; measure before considering direct GPU-buffer handoff. This
+does not grant a render device or establish an aggregate GPU memory budget.
+CPU rendering is not a silent production fallback.
 
 Deadlines initiate recovery; they never authorize reuse of storage still held
 by GPU or Engine consumers. Budget reservations and terminal-response capacity

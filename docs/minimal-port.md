@@ -20,7 +20,7 @@ Xilem/Masonry view path, not a complete admitted native shell.
 ## Tested boundaries
 
 The standard `tools/check.sh` gate passed locally: 16 Python gate tests and
-29 Rust integration tests, formatting, doc checks, zero-warning Clippy and source
+29 Rust integration tests at the initial Minimal landing, formatting, doc checks, zero-warning Clippy and source
 length checks. An actual manifest mutation promoting the software renderer into
 normal dependencies was rejected by the dependency audit and then restored.
 The gate remains display-free and GPU-free. It checks
@@ -44,14 +44,31 @@ The normal gate unsets this variable and cannot bless snapshots. Failure writes
 actual images under `.artifacts/snapshots/` for inspection. These tests exercise
 widget simulation and local scenes, not Sophia target routing or click-through.
 
-## Implemented GPU diagnostic, execution pending
+## GPU diagnostic and the readback prototype
 
 `lom preview` takes explicit configuration, theme and fixture inputs, validates
 them before device creation and renders sequential images to a new directory.
 Only Vulkan is requested, with no compatible surface. A reported CPU adapter is
 refused. Masonry's Vello renderer draws and reads back the scenes; PNG output is
-a diagnostic cost, not the eventual transport design. No GPU/native run was
-performed as part of this port. The command is compiled by the standard gate.
+a diagnostic cost, not native presentation. The operator subsequently ran the
+preview successfully on the RADV RAPHAEL_MENDOCINO integrated GPU, producing a
+1280x24 panel and calendar in `/tmp/lom-minimal-preview`. That run establishes
+offscreen GPU rendering, not presentation or a complete performance acceptance.
+It predates the bounded readback change below; no GPU rerun of that change has
+been performed. The command remains compiled by the standard offline gate.
+
+The readback tranche adds six Rust tests (35 total): straight-alpha RGBA to
+premultiplied BGRA conversion, canonical whole-row chunks, joint size limits,
+and the production map-callback deadline. Conversion consumes the readback
+vector in place and exports immutable bytes. Each content resource is at most
+4 MiB, independently of the larger diagnostic preview limit.
+
+The renderer now uses Vello's texture path with a caller-owned readback. A
+two-second prototype deadline covers GPU polling and callback delivery. Failure
+retains the submitted job and prevents a second job; it never treats timeout as
+GPU completion. Callback tests are GPU-free and do not prove driver behavior.
+Vello's internal GPU allocation budget is still unresolved. No native permission,
+connection, presentation or input path follows from these readback utilities.
 
 Local preview limits are 8192×4096, at most 8M pixels per image and scale 0.5–4;
 there is one synchronous render/readback at a time. The widget-message queue is
@@ -60,8 +77,8 @@ separate negotiated GPU memory/fence/retirement budgets required for a shell.
 
 ## Remaining acceptance
 
-- Execute the GPU diagnostic in an explicitly authorized environment, retaining
-  source/binary/device identity, images, timing and memory observations.
+- Extend the observed GPU diagnostic with source/binary/device identity, timing
+  and memory evidence, and test the changed bounded-readback path explicitly.
 - Implement authorized live sources and scheduling. Focused title, battery,
   system information and tray are text fixtures, not functioning integrations.
 - Integrate Sophia content admission and the separately designed GPU access and

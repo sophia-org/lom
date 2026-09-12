@@ -85,7 +85,10 @@ inline `#[test]` functions or `#[cfg(test)] mod tests` blocks under `src/`.
 Exercise public behavior and do not expose private helpers solely for tests.
 If a private invariant genuinely requires an external test module mounted at a
 private boundary, document the precise justification here before introducing
-it. There are no such exceptions at project creation.
+it. The readback deadline check in `tests/readback_completion.rs` compiles the
+private, GPU-free `src/render/completion.rs` module directly. This exercises the
+production poll/callback deadline function without exposing a test API or opening
+a GPU. Test bodies remain outside `src`.
 
 Repository-tool tests live in `tools/tests/` and exercise the actual command or
 observable behavior. Gate regressions must prove both acceptance and rejection,
