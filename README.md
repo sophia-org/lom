@@ -78,6 +78,11 @@ and [the implementation evidence](docs/minimal-port.md).
 - Modules acquire no ambient host-service or execution rights from configuration.
 - GPU access, immutable content handoff and native input need separate admitted contracts.
 
+Linux builds need a C toolchain, `pkg-config`, and Fontconfig development files
+(`libfontconfig1-dev` on Debian/Ubuntu; `fontconfig-devel` on Void), required by
+upstream Fontique. This build dependency does not enable system-font discovery
+in the preview host.
+
 ```sh
 sh tools/check.sh
 ```

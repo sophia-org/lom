@@ -17,5 +17,9 @@ jobs:
           persist-credentials: false
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.96.1 --profile minimal --component rustfmt --component clippy
+      - name: Install Linux text-stack build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y pkg-config libfontconfig1-dev
       - name: Check source layout, formatting, tests, and Clippy
         run: sh tools/check.sh
