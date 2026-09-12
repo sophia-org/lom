@@ -3,6 +3,9 @@
 **Role:** intended client architecture and implementation constraints.
 **Status:** design foundation; not an implemented or validated shell.
 
+Implementation must follow the [style guide](docs/style-guide.md), including
+source-layout checks, test placement, logging, and warning discipline.
+
 Lom is an original native shell for Sophia. Ironbar inspires the product:
 configurable panels, useful modules, flexible styling, and rich popouts. Lom
 does not promise ironbar configuration, GTK CSS, source, or feature parity.

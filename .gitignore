@@ -1,3 +1,5 @@
 /target/
 /.artifacts/
 *.profraw
+__pycache__/
+*.py[cod]

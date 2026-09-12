@@ -69,6 +69,19 @@ Shell authors should eventually be able to reuse the driver rather than
 reimplement protocol framing, resource ownership, pacing, and epoch handling.
 The protocol must remain independently implementable and renderer-independent.
 
+## Development
+
+Follow the [style guide](docs/style-guide.md), adapted from Sophia, and the
+[architecture](ARCHITECTURE.md). Run the source-layout gate and its regression
+tests with:
+
+```sh
+sh tools/check.sh
+```
+
+Production sources are reviewed at 800 lines and rejected above 1,000 lines.
+Large tests are reported for review. The same gate runs in GitHub Actions.
+
 ## License
 
 BSD-3-Clause. See [LICENSE](LICENSE).
