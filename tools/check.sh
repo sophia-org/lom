@@ -11,6 +11,8 @@ RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings"
 export RUSTFLAGS RUSTDOCFLAGS
 unset LOM_UPDATE_SNAPSHOTS DISPLAY WAYLAND_DISPLAY XAUTHORITY
 cargo fmt --all -- --check
+# Populate the pinned cache before the graph audit deliberately goes offline.
+cargo fetch --locked
 python3 -B tools/audit_dependencies.py
 cargo test --workspace --all-targets --locked
 cargo test --workspace --doc --locked

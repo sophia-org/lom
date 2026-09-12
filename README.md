@@ -86,7 +86,9 @@ The same display-free, GPU-free gate runs in CI: source-length checks, formattin
 configuration/reducer/widget/image/CLI tests, doc tests, dependency-boundary audit
 and strict Clippy. Sources are reviewed at 800 lines and rejected above 1,000.
 Xilem packages are pinned together; the Rust toolchain and dependency lockfile
-are committed. Do not treat software snapshots as GPU or native acceptance.
+are committed. The gate fetches locked dependencies before offline graph inspection;
+use `CARGO_NET_OFFLINE=true` with an already populated cache for a disconnected run.
+Do not treat software snapshots as GPU or native acceptance.
 
 ## License
 
