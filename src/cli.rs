@@ -1,5 +1,6 @@
 //! Command-line diagnostics, explicitly separated from native shell startup.
 
+mod content_proof;
 mod preview;
 
 use crate::{
@@ -13,7 +14,7 @@ use std::{
 };
 
 /// Help displayed without loading configuration, fonts or a GPU.
-pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\nIt opens no application window or Sophia connection. Fixture data is synthetic.\nNative shell startup is not implemented yet.\n";
+pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n       lom content-proof --socket FILE\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\ncontent-proof exercises fixed diagnostic pixels over an explicitly admitted Sophia socket; it does not present a panel.\nNative shell startup is not implemented yet.\n";
 
 /// Run one diagnostic command; the caller prints any returned boundary failure.
 pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
@@ -30,6 +31,7 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
     };
     let allowed = match command {
         "check-config" => &["--config", "--theme"][..],
+        "content-proof" => &["--socket"][..],
         "preview" => &[
             "--config",
             "--theme",
@@ -41,6 +43,9 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
         _ => return Err("unsupported arguments; use --help".into()),
     };
     let options = options(&arguments[1..], allowed)?;
+    if command == "content-proof" {
+        return content_proof::run(required(&options, "--socket")?);
+    }
     let (config, theme) = load(
         &required(&options, "--config")?,
         &required(&options, "--theme")?,

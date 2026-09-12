@@ -21,6 +21,8 @@ tokio = { version = "1.50", features = ["rt", "sync"] }
 wgpu = { version = "28.0", default-features = false, features = ["vulkan", "wgsl", "std", "parking_lot"] }
 pollster = "0.4"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+sophia-protocol = { git = "https://github.com/sophia-org/sophia-stack", rev = "16e819c0d1e33d44c99db96a2d280f5b00ff486c" }
+sophia-shell-client = { git = "https://github.com/sophia-org/sophia-stack", rev = "16e819c0d1e33d44c99db96a2d280f5b00ff486c" }
 
 [dev-dependencies]
 imaging_vello_cpu = "0.0.1"
