@@ -15,15 +15,19 @@ promised.
 Project foundation only. There is no runnable shell, native acceptance result,
 or build command yet.
 
-The proposed UI stack is [Masonry](https://github.com/linebender/xilem/tree/main/masonry)
-with Vello GPU rendering and a direct Sophia platform driver. Masonry belongs
-to the Xilem repository; using its widgets does not require adopting Xilem's
-reactive application layer. Exact dependency versions and integration points
-must be established by a feasibility prototype.
+The chosen UI direction is Xilem's reactive layer through `xilem_masonry`,
+Masonry widgets, Parley/Fontique text support, and Vello GPU rendering through
+`wgpu`, with a direct Sophia platform driver. Lom uses a data-oriented
+application model and an explicit Elm/TEA message, update, and effect discipline;
+Xilem owns view reconciliation. Exact dependency versions and integration
+points must be established by a feasibility prototype.
 
 GTK and a private Wayland bridge are outside this project's chosen direction.
 
 ## Architecture
+
+See [Lom Architecture](ARCHITECTURE.md) for ownership, the TEA event flow,
+presentation lifetimes, module boundaries, and implementation gates.
 
 - Lom owns widgets, styling, module state, and rendering.
 - Sophia owns shell admission, authoritative placement, composition, physical
@@ -48,10 +52,10 @@ those contracts or claim the content runtime is implemented.
 
 ## First milestone
 
-Prove one panel, label, button, and anchored popout through a direct Masonry
-driver before expanding into a desktop shell:
+Prove one panel, label, button, and anchored popout through a direct
+Xilem/Masonry Sophia driver before expanding into a desktop shell:
 
-1. Pin and inspect the Masonry platform-driver and Vello GPU interfaces.
+1. Pin and inspect the `xilem_masonry`, Masonry driver, and Vello GPU interfaces.
 2. Render offscreen without an X11 or Wayland connection in an explicitly
    authorized GPU test environment; retain versioned evidence.
 3. Demonstrate target registration and action delivery across UI changes,
