@@ -3,9 +3,9 @@ use std::time::{Duration, Instant};
 
 use sophia_protocol::{
     ContentAllocationId, ContentCandidateBegin, ContentCandidateChunk, ContentCandidateEnd,
-    ContentMargins, ContentPixelRect, ContentPlacement, ContentReason, ContentResourceBegin,
-    ContentResourceChunk, ContentResourceEnd, ContentResourceId, ContentResourceRetire,
-    ContentSurface, ContentTarget, SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE,
+    ContentFrameDemand, ContentMargins, ContentPixelRect, ContentPlacement, ContentReason,
+    ContentResourceBegin, ContentResourceChunk, ContentResourceEnd, ContentResourceId,
+    ContentResourceRetire, ContentSurface, ContentTarget, SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE,
     SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER, ShellContentRecord, TransactionId,
 };
 use sophia_shell_client::{ShellClientOptions, ShellConnection};
@@ -27,6 +27,12 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     .map_err(|error| format!("content negotiation failed: {error}"))?;
     let ShellContentRecord::Limits(limits) = receive(&mut connection)? else {
         return Err("first content record was not ContentLimits".into());
+    };
+    let ShellContentRecord::OutputFacts(facts) = receive(&mut connection)? else {
+        return Err("ContentLimits was not followed by output facts".into());
+    };
+    let [output] = facts.outputs.as_slice() else {
+        return Err("conformance host did not publish one exact output".into());
     };
     let pixels = ContentPixels::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 128])?;
     let chunks = pixels
@@ -82,6 +88,17 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     {
         return Err("resource did not pass admitted then accepted states".into());
     }
+    send(
+        &mut connection,
+        TransactionId::from_raw(9),
+        ShellContentRecord::FrameDemand(ContentFrameDemand {
+            grant: limits.grant,
+            output: output.output,
+            allocation: ContentAllocationId::default(),
+            demand_id: 1,
+            reason: 1,
+        }),
+    )?;
     let ShellContentRecord::FramePermit(permit) = receive(&mut connection)? else {
         return Err("accepted resource was not followed by a frame permit".into());
     };

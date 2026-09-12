@@ -6,7 +6,8 @@
 //! admitted Sophia design; this scaffold defines no wire records.
 //!
 //! The diagnostic content proof negotiates, transfers one immutable resource and
-//! submits one complete candidate under an Engine-issued permit. Its headless
+//! raises one frame demand and submits a complete candidate only under the
+//! Engine-issued permit. Its headless
 //! host returns the real renderer-failure outcome; it never reports native
 //! presentation. Production allocation, demand pacing, input, and presentation
 //! remain closed until their Sophia owners are implemented and admitted.

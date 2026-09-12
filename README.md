@@ -68,9 +68,9 @@ Running `lom` without arguments still exits with status 2: native shell startup
 is unavailable. Nothing here installs or changes the current desktop.
 
 `lom content-proof --socket PATH` is reserved for Sophia's protected conformance
-host. It uploads canonical pixels and submits one complete candidate under a
-permit. The current headless host returns renderer failure by design; neither
-side reports that exchange as native presentation.
+host. It uploads canonical pixels, raises a frame demand and submits one complete
+candidate under the returned permit. The current headless host returns renderer
+failure by design; neither side reports that exchange as native presentation.
 
 ## Architecture and development
 
