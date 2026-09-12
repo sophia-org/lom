@@ -1,0 +1,25 @@
+// Adapted from ironbar's Minimal arrangement. See THIRD_PARTY.md.
+version 1
+panel "main" {
+    position "top"
+    height 24
+    margin 0 0 0 0
+    popup-gap 5
+    start {
+        workspaces "workspaces"
+    }
+    center {
+        focused "focused"
+    }
+    end {
+        battery "battery" {
+            visible-when "available"
+        }
+        sys-info "system"
+        tray "tray"
+        clock "clock" {
+            format "%d/%m/%Y %H:%M"
+            format-popup "%H:%M:%S"
+        }
+    }
+}

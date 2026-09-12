@@ -1,14 +1,18 @@
 # Lom Architecture
 
 **Role:** intended client architecture and implementation constraints.
-**Status:** design foundation; not an implemented or validated shell.
+**Status:** client design with a tested local Minimal UI prototype; native shell
+integration and GPU/native acceptance remain incomplete. See
+[implementation evidence](docs/minimal-port.md).
 
 Implementation must follow the [style guide](docs/style-guide.md), including
 source-layout checks, test placement, logging, and warning discipline.
 
 Lom is an original native shell for Sophia. Ironbar inspires the product:
 configurable panels, useful modules, flexible styling, and rich popouts. Lom
-does not promise ironbar configuration, GTK CSS, source, or feature parity.
+aims to preserve familiar ironbar appearance, features and configuration
+concepts through an incremental port. Its configuration and themes use KDL; it
+does not interpret GTK CSS or promise drop-in compatibility or source parity.
 
 The chosen stack is Rust, Xilem's reactive layer through `xilem_masonry`,
 Masonry widgets, Parley/Fontique text support, and Vello GPU rendering through
@@ -280,9 +284,10 @@ connections or broader access.
 
 Ironbar informs layout flexibility, useful module combinations, theming, and
 popout behavior. Its host integrations are not inherited permissions. Lom owns
-its configuration and typed style data; this document does not choose a file
-grammar or promise GTK CSS interpretation. Validated style or configuration
-changes become model updates and use the same presentation lifecycle.
+its KDL v2 configuration and typed KDL theme data. The implemented subset and
+migration mappings are documented in [configuration](docs/configuration.md);
+unknown options are rejected instead of implying compatibility. Validated style
+or configuration changes become model updates and use the same presentation lifecycle.
 
 Labels and buttons form the first workflow. Text entry, general keyboard input,
 continuous controls, exceptional local coordinates, and accessibility delivery

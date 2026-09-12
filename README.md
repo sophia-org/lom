@@ -1,103 +1,94 @@
 # lom
 
 An original native desktop shell for [Sophia](https://github.com/sophia-org/sophia-stack).
-
 **Лом** (*lom*) is Russian for a crowbar or heavy iron bar.
 
-Lom aims for the configurable panels, useful modules, and polished popouts that
-make ironbar appealing, with a Rust UI built for Sophia's native shell contract.
-It is a new project, not an ironbar fork or a drop-in replacement. No ironbar
-source has been imported. Configuration and theme compatibility are not yet
-promised.
+Lom brings ironbar-inspired panels, modules and popouts to a Rust UI built from
+Xilem, Masonry, Parley and Vello GPU. Its application model follows explicit
+TEA messages, reducers and effects. Configuration **and themes use KDL**.
 
-## Status
+## Minimal, the first port
 
-Buildable project scaffold only. The CLI supports help and version output;
-native shell startup, the GUI, and the renderer are not implemented or accepted.
+The first components preserve ironbar Minimal's compact panel, palette,
+monospace text, workspace states and clock/calendar. The bundled configuration
+retains its start/center/end arrangement. Compatibility is incremental;
+Lom is an original project, not a drop-in GTK/CSS replacement.
 
-The chosen UI direction is Xilem's reactive layer through `xilem_masonry`,
-Masonry widgets, Parley/Fontique text support, and Vello GPU rendering through
-`wgpu`, with a direct Sophia platform driver. Lom uses a data-oriented
-application model and an explicit Elm/TEA message, update, and effect discipline;
-Xilem owns view reconciliation. Exact dependency versions and integration
-points must be established by a feasibility prototype.
+![Minimal panel with synthetic data](tests/snapshots/minimal.png)
 
-GTK and a private Wayland bridge are outside this project's chosen direction.
+![Clock/calendar fixture](tests/snapshots/calendar.png)
 
-## Architecture
+These images come from the real Xilem/Masonry view path, rendered with a
+**software test renderer** for repeatable snapshots. They show synthetic fixture
+data, not an admitted shell or proof of the GPU path.
 
-See [Lom Architecture](ARCHITECTURE.md) for ownership, the TEA event flow,
-presentation lifetimes, module boundaries, and implementation gates.
+| Component | Current evidence |
+| --- | --- |
+| KDL panel/theme configuration | Validated with positioned diagnostics and explicit availability reporting |
+| Labels and workspaces | Actual views; naming, filtering, ordering and state styling; live indicator adapter pending |
+| Clock/calendar | Explicit time observations, navigation, week numbers, open/dismiss intent; no native allocation yet |
+| Focused title, battery, system info, tray | Fixture-backed text presentations only; authorized integrations and full features pending |
+| Xilem/Masonry host | Windowless construction, rebuild, paint and teardown tested |
+| GPU preview | Vello/Vulkan command implemented and compiled; GPU execution not yet accepted |
+| Native Sophia shell | Content runtime, GPU access/handoff, exact presented-target ledger and acceptance remain open |
 
-- Lom owns widgets, styling, module state, and rendering.
-- Sophia owns shell admission, authoritative placement, composition, physical
-  input selection, and revocation.
-- A direct driver connects Lom to `sophia_shell_v1`; toolkit objects and Vello
-  scenes remain implementation details of the client.
-- GPU rendering is a project requirement. Sophia's initial proposed content
-  transport carries CPU pixel bytes. GPU resource sharing, synchronization,
-  and release require a separately admitted design; they are not available
-  simply because the client uses Vello. Readback would be a measured prototype
-  technique, not an assumed final transport.
-- Interactions must refer to the applicable presented targets and their action
-  identities. A newer local widget tree cannot reinterpret an older activation.
-- Content permission does not grant arbitrary host services, application
-  control, clipboard access, execution, or a general input stream. Modules need
-  separately authorized data and actions.
+The current preview uses three equally sized regions with independent clipping.
+Its center stays centered; narrow layouts may clip module content. Sizes in KDL
+are desired logical placement. A PNG does not acknowledge an Engine allocation.
 
-Sophia's [content-shell contract](https://github.com/sophia-org/sophia-stack/blob/master/docs/content-shell.md)
-and [target-resolved input contract](https://github.com/sophia-org/sophia-stack/blob/master/docs/target-resolved-input.md)
-govern integration. This README proposes a client direction; it does not amend
-those contracts or claim the content runtime is implemented.
+## Try the configuration
 
-## First milestone
+```sh
+cargo run --locked -- check-config \
+  --config examples/minimal/config.kdl \
+  --theme examples/minimal/theme.kdl
+```
 
-Prove one panel, label, button, and anchored popout through a direct
-Xilem/Masonry Sophia driver before expanding into a desktop shell:
+This requires no display, GPU or Sophia connection. See
+[configuration and migration](docs/configuration.md) for the supported KDL subset,
+style precedence, fixture grammar and intentional compatibility limits.
 
-1. Pin and inspect the `xilem_masonry`, Masonry driver, and Vello GPU interfaces.
-2. Render offscreen without an X11 or Wayland connection in an explicitly
-   authorized GPU test environment; retain versioned evidence.
-3. Demonstrate target registration and action delivery across UI changes,
-   including stale activation and teardown cases.
-4. Specify and validate Sophia's GPU access and content handoff before native
-   integration. Account for budgets, fences, rejection, and delayed retirement.
-5. Complete the shared content lifecycle and run a real panel/popout acceptance
-   test only when the required Sophia implementation is available.
+For an **explicitly authorized offscreen GPU run**, the separate command is:
 
-Shell authors should eventually be able to reuse the driver rather than
-reimplement protocol framing, resource ownership, pacing, and epoch handling.
-The protocol must remain independently implementable and renderer-independent.
+```sh
+cargo run --locked -- preview \
+  --config examples/minimal/config.kdl \
+  --theme examples/minimal/theme.kdl \
+  --fixture examples/minimal/fixture.kdl \
+  --output /tmp/lom-minimal-preview --width 1280 --scale 1
+```
 
-## Development
+The output directory must not exist. The command initializes a Vulkan GPU,
+writes `panel.png`, `calendar.png` when a clock is configured, and `evidence.txt`.
+It refuses a reported CPU adapter. GPU failures return a nonzero exit and retain
+`failure.txt`; no CPU fallback is selected. Readback is diagnostic output,
+not an admitted Sophia transport. No X11, Wayland or Sophia connection is opened.
 
-Follow the [style guide](docs/style-guide.md), adapted from Sophia, and the
-[architecture](ARCHITECTURE.md). The Rust toolchain is pinned in
-`rust-toolchain.toml`. Run the complete offline code gate with:
+Running `lom` without arguments still exits with status 2: native shell startup
+is unavailable. Nothing here installs or changes the current desktop.
+
+## Architecture and development
+
+Read [ARCHITECTURE.md](ARCHITECTURE.md), [the style guide](docs/style-guide.md)
+and [the implementation evidence](docs/minimal-port.md).
+
+- Xilem owns reconciliation; the application model contains no widgets or GPU objects.
+- The runtime serializes observations and owns effects. Widgets emit semantic messages.
+- Sophia owns placement, admission, composition, target selection and revocation.
+- Modules acquire no ambient host-service or execution rights from configuration.
+- GPU access, immutable content handoff and native input need separate admitted contracts.
 
 ```sh
 sh tools/check.sh
 ```
 
-Production sources are reviewed at 800 lines and rejected above 1,000 lines.
-Large tests are reported for review. The gate also runs formatting, CLI tests,
-doc tests, and Clippy with warnings denied. The same gate runs in GitHub Actions.
-
-```sh
-cargo build --locked
-cargo run --locked -- --help
-cargo run --locked -- --version
-```
-
-Running `lom` without arguments deliberately exits with status 2 and explains
-that native shell startup is unavailable. These commands do not connect to
-Sophia or a display or initialize a GPU.
-
-The library has documented stubs for `model`, `update`, `modules`, `protocol`,
-`runtime`, `ui`, and `render`. No toolkit dependencies or wire records have been
-invented for the scaffold; pinning Xilem/Masonry and Vello belongs to the first
-feasibility milestone.
+The same display-free, GPU-free gate runs in CI: source-length checks, formatting,
+configuration/reducer/widget/image/CLI tests, doc tests, dependency-boundary audit
+and strict Clippy. Sources are reviewed at 800 lines and rejected above 1,000.
+Xilem packages are pinned together; the Rust toolchain and dependency lockfile
+are committed. Do not treat software snapshots as GPU or native acceptance.
 
 ## License
 
-BSD-3-Clause. See [LICENSE](LICENSE).
+Lom code is BSD-3-Clause. Adapted ironbar material and bundled fonts retain their
+licenses; see [THIRD_PARTY.md](THIRD_PARTY.md) and [LICENSE](LICENSE).

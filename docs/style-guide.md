@@ -160,6 +160,7 @@ warnings denied:
 
 ```sh
 cargo fmt --all -- --check
+python3 -B tools/audit_dependencies.py
 cargo test --workspace --all-targets --locked
 cargo test --workspace --doc --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings

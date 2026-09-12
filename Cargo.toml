@@ -10,3 +10,18 @@ publish = false
 
 [lints.rust]
 missing_docs = "warn"
+
+[dependencies]
+kdl = { version = "=6.7.1", default-features = false, features = ["span"] }
+chrono = { version = "0.4.42", default-features = false, features = ["std"] }
+xilem_masonry = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849def6eeab282561439b963862e5", default-features = false }
+masonry = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849def6eeab282561439b963862e5", default-features = false }
+masonry_imaging = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849def6eeab282561439b963862e5", default-features = false, features = ["imaging_vello"] }
+tokio = { version = "1.50", features = ["rt", "sync"] }
+wgpu = { version = "28.0", default-features = false, features = ["vulkan", "wgsl", "std", "parking_lot"] }
+pollster = "0.4"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+imaging_vello_cpu = "0.0.1"
+masonry_testing = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849def6eeab282561439b963862e5", default-features = false }
