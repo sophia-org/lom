@@ -57,7 +57,7 @@ offscreen GPU rendering, not presentation or a complete performance acceptance.
 It predates the bounded readback change below; no GPU rerun of that change has
 been performed. The command remains compiled by the standard offline gate.
 
-The readback tranche adds six Rust tests (35 total): straight-alpha RGBA to
+The readback tranche adds six Rust tests: straight-alpha RGBA to
 premultiplied BGRA conversion, canonical whole-row chunks, joint size limits,
 and the production map-callback deadline. Conversion consumes the readback
 vector in place and exports immutable bytes. Each content resource is at most
@@ -67,8 +67,12 @@ The renderer now uses Vello's texture path with a caller-owned readback. A
 two-second prototype deadline covers GPU polling and callback delivery. Failure
 retains the submitted job and prevents a second job; it never treats timeout as
 GPU completion. Callback tests are GPU-free and do not prove driver behavior.
-Vello's internal GPU allocation budget is still unresolved. No native permission,
-connection, presentation or input path follows from these readback utilities.
+Vello's internal GPU allocation budget is still unresolved. A protected
+display-independent conformance client now negotiates content, uploads those
+canonical bytes and submits one complete panel candidate under an Engine-issued
+permit. Its host verifies the resource and candidate tables, then deliberately
+reports renderer failure because it owns no native output. No native permission,
+presentation or input path follows from that proof.
 
 Local preview limits are 8192×4096, at most 8M pixels per image and scale 0.5–4;
 there is one synchronous render/readback at a time. The widget-message queue is
@@ -81,8 +85,8 @@ separate negotiated GPU memory/fence/retirement budgets required for a shell.
   and memory evidence, and test the changed bounded-readback path explicitly.
 - Implement authorized live sources and scheduling. Focused title, battery,
   system information and tray are text fixtures, not functioning integrations.
-- Integrate Sophia content admission and the separately designed GPU access and
-  handoff. No new wire records or grants were assigned here.
+- Connect the admitted candidate path to Sophia's allocation/work-area owner and
+  separately designed GPU access and handoff. Production grants stay disabled.
 - Implement and verify exact *presented-candidate* action bindings. Current
   semantic messages validate module and observation identity conservatively;
   they do not implement a candidate-retention ledger, event deduplication,

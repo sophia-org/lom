@@ -30,7 +30,7 @@ data, not an admitted shell or proof of the GPU path.
 | Focused title, battery, system info, tray | Fixture-backed text presentations only; authorized integrations and full features pending |
 | Xilem/Masonry host | Windowless construction, rebuild, paint and teardown tested |
 | GPU preview | Vello/Vulkan command implemented and compiled; GPU execution not yet accepted |
-| Native Sophia shell | Content runtime, GPU access/handoff, exact presented-target ledger and acceptance remain open |
+| Native Sophia shell | Protected resource and complete-candidate conformance passes; allocation, native rendering, input and acceptance remain open |
 
 The current preview uses three equally sized regions with independent clipping.
 Its center stays centered; narrow layouts may clip module content. Sizes in KDL
@@ -66,6 +66,11 @@ not an admitted Sophia transport. No X11, Wayland or Sophia connection is opened
 
 Running `lom` without arguments still exits with status 2: native shell startup
 is unavailable. Nothing here installs or changes the current desktop.
+
+`lom content-proof --socket PATH` is reserved for Sophia's protected conformance
+host. It uploads canonical pixels and submits one complete candidate under a
+permit. The current headless host returns renderer failure by design; neither
+side reports that exchange as native presentation.
 
 ## Architecture and development
 

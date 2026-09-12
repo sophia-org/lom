@@ -5,9 +5,11 @@
 //! local widget identities. New GPU handoff semantics require a separately
 //! admitted Sophia design; this scaffold defines no wire records.
 //!
-//! The diagnostic content proof negotiates and transfers one immutable resource.
-//! Production allocation, pacing, candidates, input, and presentation remain
-//! closed until their Sophia owners are implemented and admitted.
+//! The diagnostic content proof negotiates, transfers one immutable resource and
+//! submits one complete candidate under an Engine-issued permit. Its headless
+//! host returns the real renderer-failure outcome; it never reports native
+//! presentation. Production allocation, demand pacing, input, and presentation
+//! remain closed until their Sophia owners are implemented and admitted.
 
 mod pixels;
 pub use pixels::{ContentPixels, PixelChunk, PixelChunks};

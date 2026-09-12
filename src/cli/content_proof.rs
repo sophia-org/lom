@@ -2,8 +2,10 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use sophia_protocol::{
-    ContentReason, ContentResourceBegin, ContentResourceChunk, ContentResourceEnd,
-    ContentResourceId, ContentResourceRetire, SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE,
+    ContentAllocationId, ContentCandidateBegin, ContentCandidateChunk, ContentCandidateEnd,
+    ContentMargins, ContentPixelRect, ContentPlacement, ContentReason, ContentResourceBegin,
+    ContentResourceChunk, ContentResourceEnd, ContentResourceId, ContentResourceRetire,
+    ContentSurface, ContentTarget, SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE,
     SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER, ShellContentRecord, TransactionId,
 };
 use sophia_shell_client::{ShellClientOptions, ShellConnection};
@@ -80,6 +82,96 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     {
         return Err("resource did not pass admitted then accepted states".into());
     }
+    let ShellContentRecord::FramePermit(permit) = receive(&mut connection)? else {
+        return Err("accepted resource was not followed by a frame permit".into());
+    };
+    if permit.state != 1 || permit.permit_id == 0 {
+        return Err("frame permit was not a fresh grant".into());
+    }
+    let allocation = ContentAllocationId {
+        id: 1,
+        generation: 1,
+    };
+    for (transaction, record) in [
+        (
+            10,
+            ShellContentRecord::CandidateBegin(ContentCandidateBegin {
+                grant: limits.grant,
+                candidate_generation: 1,
+                output: permit.output,
+                facts_generation: 1,
+                pacing_permit: permit.permit_id,
+                interaction_generation: 1,
+                surface_count: 1,
+                placement_count: 1,
+                target_count: 1,
+            }),
+        ),
+        (
+            11,
+            ShellContentRecord::CandidateChunk(ContentCandidateChunk {
+                grant: limits.grant,
+                candidate_generation: 1,
+                chunk_ordinal: 0,
+                surfaces: vec![ContentSurface {
+                    allocation,
+                    scale_generation: 1,
+                    role: 1,
+                    edge: 1,
+                    margins: ContentMargins::default(),
+                    reservation_extent: 24,
+                    parent_surface_index: u16::MAX,
+                    anchor_parent_rect: ContentPixelRect::default(),
+                }],
+                placements: vec![ContentPlacement {
+                    resource,
+                    surface_index: 0,
+                    destination_x_px: 3,
+                    destination_y_px: 4,
+                }],
+                targets: vec![ContentTarget {
+                    surface_index: 0,
+                    action_kind: 1,
+                    target_id: 1,
+                    target_generation: 1,
+                    action_id: 1,
+                    bounds_px: ContentPixelRect {
+                        x: 3,
+                        y: 4,
+                        width: 2,
+                        height: 1,
+                    },
+                }],
+            }),
+        ),
+        (
+            12,
+            ShellContentRecord::CandidateEnd(ContentCandidateEnd {
+                grant: limits.grant,
+                candidate_generation: 1,
+                surface_count: 1,
+                placement_count: 1,
+                target_count: 1,
+            }),
+        ),
+    ] {
+        send(
+            &mut connection,
+            TransactionId::from_raw(transaction),
+            record,
+        )?;
+    }
+    let ShellContentRecord::CandidateOutcome(outcome) = receive(&mut connection)? else {
+        return Err("candidate did not receive a terminal outcome".into());
+    };
+    if outcome.candidate_generation != 1
+        || outcome.output != permit.output
+        || outcome.kind != 3
+        || outcome.reason != ContentReason::RendererFailed as u16
+        || outcome.presentation_epoch != 0
+    {
+        return Err("headless candidate did not take the exact renderer-failure outcome".into());
+    }
     send(
         &mut connection,
         TransactionId::from_raw(2),
@@ -95,9 +187,10 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
         return Err("resource release identity or reason changed".into());
     }
     println!(
-        "lom_content_transport schema=1 status=complete revision={} bytes={} resource=1/1 native_presentation=false",
+        "lom_content_transport schema=1 status=complete revision={} bytes={} resource=1/1 candidate=accepted renderer_outcome={} native_presentation=false",
         connection.welcome().selected_revision,
-        pixels.bytes().len()
+        pixels.bytes().len(),
+        ContentReason::RendererFailed as u16,
     );
     Ok(())
 }
