@@ -32,6 +32,13 @@ software fallback may substitute for a missing grant. Ordinary upstream Linux
 device/driver interfaces are the target; no custom kernel or particular GPU
 memory controller is required.
 
+The grant and private device inventory remain the authority for adapter
+selection. Lom matches the exact PCI bus identity when wgpu obtains it from the
+optional Vulkan PCI-bus extension. When that extension supplies no bus string,
+Lom matches Sophia's host-observed PCI vendor/device pair inside the domain that
+exposes exactly one render node. It never treats enumeration order as identity;
+missing fallback fields, conflicting bus identities and multiple matches fail.
+
 Direct permission accepts GPU-driver and availability risk. It is not a hard
 aggregate VRAM quota or a guarantee against desktop-wide device loss. Lom must
 bound its known allocations, outstanding work, queues and waits without

@@ -26,6 +26,10 @@ pub struct GpuAdmissionEvidence {
     pub device_minor: u32,
     /// PCI identity when both Sophia and Vulkan expose one.
     pub pci_bus_id: Option<String>,
+    /// PCI vendor identifier supplied by Sophia.
+    pub pci_vendor_id: Option<u32>,
+    /// PCI device identifier supplied by Sophia.
+    pub pci_device_id: Option<u32>,
     /// Vulkan adapter selected after applying the exact grant.
     pub adapter: wgpu::AdapterInfo,
     /// Sorted entries visible in the private `/dev/dri` directory.
@@ -47,6 +51,8 @@ impl GpuAdmissionEvidence {
             device_major: grant.device_major,
             device_minor: grant.device_minor,
             pci_bus_id: grant.pci_bus_id.clone(),
+            pci_vendor_id: grant.pci_vendor_id,
+            pci_device_id: grant.pci_device_id,
             adapter: adapter.clone(),
             visible_dri_entries,
         })
@@ -55,12 +61,20 @@ impl GpuAdmissionEvidence {
     /// Stable diagnostic record used by isolated and native acceptance gates.
     pub fn record(&self) -> String {
         format!(
-            "lom_gpu_admission schema=1 status=ready grant_epoch={} render_node={} device_major={} device_minor={} pci_bus_id={} backend={:?} device_type={:?} adapter_name={:?} driver={:?} visible_dri_entries={}",
+            "lom_gpu_admission schema=1 status=ready grant_epoch={} render_node={} device_major={} device_minor={} pci_bus_id={} pci_vendor_id={} pci_device_id={} backend={:?} device_type={:?} adapter_name={:?} driver={:?} visible_dri_entries={}",
             self.grant_epoch,
             self.render_node.display(),
             self.device_major,
             self.device_minor,
             self.pci_bus_id.as_deref().unwrap_or("none"),
+            self.pci_vendor_id
+                .map(|value| format!("{value:04x}"))
+                .as_deref()
+                .unwrap_or("none"),
+            self.pci_device_id
+                .map(|value| format!("{value:04x}"))
+                .as_deref()
+                .unwrap_or("none"),
             self.adapter.backend,
             self.adapter.device_type,
             self.adapter.name,

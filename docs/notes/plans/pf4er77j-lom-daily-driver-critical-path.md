@@ -103,6 +103,15 @@ seconds clock. Sophia's paired isolated runner and tty4 gate are materialized,
 but neither is hardware evidence until it is actually run and retained. t003
 therefore remains active.
 
+The first protected hardware preflight on Sophia `61c37741` and Lom `1225b12`
+stopped before display takeover because no enumerated Vulkan adapter passed the
+grant selector. The aggregate client error does not reveal whether enumeration
+was empty or whether wgpu omitted or disagreed on the optional PCI-bus string.
+The successor candidate validates Sophia's PCI vendor/device fallback within
+the single-render-node domain and reports bounded adapter counts on failure.
+This is a portable selection repair with deterministic coverage, not proof that
+it caused the observed refusal; t003 still requires a retained hardware result.
+
 ### t004
 
 Export a target table with each complete view candidate. Retain the exact
