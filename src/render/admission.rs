@@ -96,6 +96,21 @@ fn normalized_pci_bus_id(value: &str) -> Result<String, String> {
     Ok(value.to_ascii_lowercase())
 }
 
+pub(super) fn visible_dri_entries(path: &std::path::Path) -> Result<Vec<String>, String> {
+    let mut entries = std::fs::read_dir(path)
+        .map_err(|error| format!("GPU device directory {}: {error}", path.display()))?
+        .map(|entry| {
+            let entry = entry.map_err(|error| format!("GPU device directory entry: {error}"))?;
+            entry
+                .file_name()
+                .into_string()
+                .map_err(|_| "GPU device directory contains a non-UTF-8 entry".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    entries.sort();
+    Ok(entries)
+}
+
 pub(super) fn select_adapter(
     grant: &GpuGrant,
     adapters: &[wgpu::AdapterInfo],

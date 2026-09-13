@@ -13,6 +13,63 @@ pub use admission::GpuGrant;
 use readback::PendingReadback;
 pub use worker::RendererWorker;
 
+/// Auditable identity of the GPU worker admitted for one shell connection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GpuAdmissionEvidence {
+    /// Shell connection epoch named by Sophia's startup grant.
+    pub grant_epoch: u64,
+    /// Fixed private render node visible inside the shell domain.
+    pub render_node: std::path::PathBuf,
+    /// Kernel character-device identity observed inside the domain.
+    pub device_major: u32,
+    /// Kernel character-device identity observed inside the domain.
+    pub device_minor: u32,
+    /// PCI identity when both Sophia and Vulkan expose one.
+    pub pci_bus_id: Option<String>,
+    /// Vulkan adapter selected after applying the exact grant.
+    pub adapter: wgpu::AdapterInfo,
+    /// Sorted entries visible in the private `/dev/dri` directory.
+    pub visible_dri_entries: Vec<String>,
+}
+
+impl GpuAdmissionEvidence {
+    fn collect(grant: &GpuGrant, adapter: &wgpu::AdapterInfo) -> Result<Self, String> {
+        let visible_dri_entries = admission::visible_dri_entries(std::path::Path::new("/dev/dri"))?;
+        if visible_dri_entries.as_slice() != ["renderD128"] {
+            return Err(format!(
+                "GPU domain exposes unexpected DRM devices: {}",
+                visible_dri_entries.join(",")
+            ));
+        }
+        Ok(Self {
+            grant_epoch: grant.epoch,
+            render_node: grant.render_node.clone(),
+            device_major: grant.device_major,
+            device_minor: grant.device_minor,
+            pci_bus_id: grant.pci_bus_id.clone(),
+            adapter: adapter.clone(),
+            visible_dri_entries,
+        })
+    }
+
+    /// Stable diagnostic record used by isolated and native acceptance gates.
+    pub fn record(&self) -> String {
+        format!(
+            "lom_gpu_admission schema=1 status=ready grant_epoch={} render_node={} device_major={} device_minor={} pci_bus_id={} backend={:?} device_type={:?} adapter_name={:?} driver={:?} visible_dri_entries={}",
+            self.grant_epoch,
+            self.render_node.display(),
+            self.device_major,
+            self.device_minor,
+            self.pci_bus_id.as_deref().unwrap_or("none"),
+            self.adapter.backend,
+            self.adapter.device_type,
+            self.adapter.name,
+            self.adapter.driver,
+            self.visible_dri_entries.join(","),
+        )
+    }
+}
+
 /// Reusable Vello GPU renderer for sequential, bounded preview images.
 pub struct GpuPreview {
     renderer: masonry_imaging::vello::Renderer,

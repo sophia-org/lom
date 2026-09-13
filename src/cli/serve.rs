@@ -45,13 +45,9 @@ pub(super) fn run() -> Result<(), String> {
     )
     .map_err(|error| format!("shell negotiation failed: {error}"))?;
     let grant = GpuGrant::from_environment(connection.connection_epoch())?;
-    let mut service = ShellService::new(
-        connection,
-        config,
-        theme,
-        allowance,
-        RendererWorker::start(grant)?,
-    )?;
+    let (renderer, admission) = RendererWorker::start(grant)?;
+    println!("{}", admission.record());
+    let mut service = ShellService::new(connection, config, theme, allowance, renderer)?;
     loop {
         if service.step()? == 0 {
             std::thread::sleep(IDLE_POLL);

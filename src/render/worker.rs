@@ -1,6 +1,6 @@
 //! One bounded GPU worker keeps the protocol owner responsive during rendering.
 
-use super::{GpuGrant, GpuPreview};
+use super::{GpuAdmissionEvidence, GpuGrant, GpuPreview};
 use crate::model::Model;
 use crate::protocol::ContentPixels;
 use crate::service::ContentRenderer;
@@ -27,7 +27,7 @@ pub struct RendererWorker {
 
 impl RendererWorker {
     /// Validate the admitted adapter and initialize the worker before serving.
-    pub fn start(grant: GpuGrant) -> Result<Self, String> {
+    pub fn start(grant: GpuGrant) -> Result<(Self, GpuAdmissionEvidence), String> {
         let (requests, incoming) = mpsc::sync_channel::<RenderJob>(1);
         let (completed, completions) = mpsc::sync_channel(1);
         let (ready, readiness) = mpsc::sync_channel(1);
@@ -36,7 +36,10 @@ impl RendererWorker {
             .spawn(move || {
                 let mut renderer = match GpuPreview::new(&grant) {
                     Ok(renderer) => {
-                        let _ = ready.send(Ok(()));
+                        let evidence = GpuAdmissionEvidence::collect(&grant, renderer.adapter());
+                        if ready.send(evidence).is_err() {
+                            return;
+                        }
                         renderer
                     }
                     Err(error) => {
@@ -54,15 +57,18 @@ impl RendererWorker {
                 }
             })
             .map_err(|error| format!("start GPU worker: {error}"))?;
-        readiness
+        let evidence = readiness
             .recv_timeout(GPU_JOB_TIMEOUT)
             .map_err(|error| format!("GPU worker startup: {error}"))??;
-        Ok(Self {
-            requests,
-            completions,
-            submitted_at: None,
-            timeout: GPU_JOB_TIMEOUT,
-        })
+        Ok((
+            Self {
+                requests,
+                completions,
+                submitted_at: None,
+                timeout: GPU_JOB_TIMEOUT,
+            },
+            evidence,
+        ))
     }
 }
 

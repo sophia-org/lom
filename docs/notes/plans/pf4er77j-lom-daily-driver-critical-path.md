@@ -96,6 +96,13 @@ and an indicator update arriving while rendering is outstanding. This does not
 close t003: the paired contained GPU/device-exclusion proof and native retirement
 evidence remain separately authorized and unrun.
 
+The next candidate records the admitted Vulkan adapter and complete private
+`/dev/dri` inventory, emits checksums for content the Engine reports Presented,
+and provides a tracked Minimal live configuration with workspace pills and a
+seconds clock. Sophia's paired isolated runner and tty4 gate are materialized,
+but neither is hardware evidence until it is actually run and retained. t003
+therefore remains active.
+
 ### t004
 
 Export a target table with each complete view candidate. Retain the exact

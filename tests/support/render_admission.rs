@@ -1,5 +1,6 @@
 use super::*;
 use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn adapter(pci: &str, device_type: wgpu::DeviceType) -> wgpu::AdapterInfo {
     wgpu::AdapterInfo {
@@ -61,4 +62,24 @@ fn adapter_selection_is_exact_unique_and_never_cpu() {
         .is_err()
     );
     assert!(select_adapter(&grant, &[adapter("0000:01:00.0", wgpu::DeviceType::Cpu)]).is_err());
+}
+
+#[test]
+fn private_dri_inventory_is_sorted_and_complete() {
+    let directory = std::env::temp_dir().join(format!(
+        "lom-render-admission-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    std::fs::write(directory.join("renderD128"), []).unwrap();
+    std::fs::write(directory.join("card0"), []).unwrap();
+    assert_eq!(
+        visible_dri_entries(&directory).unwrap(),
+        ["card0".to_owned(), "renderD128".to_owned()]
+    );
+    std::fs::remove_dir_all(directory).unwrap();
 }

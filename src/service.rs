@@ -355,6 +355,20 @@ impl<R: ContentRenderer> ShellService<R> {
         let permit = self.wait_permit(output, demand_id)?;
         self.submit_candidate(index, resource, candidate, permit)?;
         self.wait_presented(output, candidate)?;
+        let indicator_generation = self
+            .latest_indicators
+            .as_ref()
+            .map_or(0, |snapshot| snapshot.generation);
+        println!(
+            "lom_panel_candidate schema=1 status=presented output={} candidate_generation={} indicator_generation={} width={} height={} bytes={} checksum={:016x}",
+            output.id,
+            candidate,
+            indicator_generation,
+            pixels.width(),
+            pixels.height(),
+            pixels.bytes().len(),
+            pixel_checksum(pixels.bytes()),
+        );
         if let Some(old) = old {
             let old = ContentResourceId {
                 id: old.id,
@@ -587,6 +601,12 @@ impl<R: ContentRenderer> ShellService<R> {
             std::thread::sleep(IDLE_POLL);
         }
     }
+}
+
+fn pixel_checksum(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+    })
 }
 
 fn receive_content(connection: &mut ShellConnection) -> Result<ShellContentRecord, String> {

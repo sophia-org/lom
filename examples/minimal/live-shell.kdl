@@ -1,0 +1,33 @@
+// First native Sophia panel: only data available on the admitted r6 feed.
+version 1
+panel "main" {
+    position "top"
+    height 24
+    margin 0 0 0 0
+    popup-gap 5
+    start {
+        workspaces "workspaces"
+    }
+    end {
+        clock "clock" {
+            format "%H:%M:%S"
+            format-popup "%H:%M:%S"
+        }
+    }
+}
+
+theme "minimal" {
+    defaults {
+        background "#1c1c1c"
+        selected "#2d2d2d"
+        foreground "#ffffff"
+        active "#6699cc"
+        urgent "#8f0a0a"
+        font-size 13
+        gap 13
+        padding 7
+    }
+    module "clock" {
+        bold #true
+    }
+}
