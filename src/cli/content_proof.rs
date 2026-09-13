@@ -2,11 +2,12 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use sophia_protocol::{
-    ContentAllocationId, ContentCandidateBegin, ContentCandidateChunk, ContentCandidateEnd,
-    ContentFrameDemand, ContentMargins, ContentPixelRect, ContentPlacement, ContentReason,
-    ContentResourceBegin, ContentResourceChunk, ContentResourceEnd, ContentResourceId,
-    ContentResourceRetire, ContentSurface, ContentTarget, SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE,
-    SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER, ShellContentRecord, TransactionId,
+    ContentAllocationId, ContentAllocationRequest, ContentCandidateBegin, ContentCandidateChunk,
+    ContentCandidateEnd, ContentFrameDemand, ContentMargins, ContentPixelRect, ContentPlacement,
+    ContentReason, ContentResourceBegin, ContentResourceChunk, ContentResourceEnd,
+    ContentResourceId, ContentResourceRetire, ContentSurface, ContentTarget,
+    SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE, SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER,
+    ShellContentRecord, TransactionId,
 };
 use sophia_shell_client::{ShellClientOptions, ShellConnection};
 
@@ -34,6 +35,37 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     let [output] = facts.outputs.as_slice() else {
         return Err("conformance host did not publish one exact output".into());
     };
+    let output = output.clone();
+    send(
+        &mut connection,
+        TransactionId::from_raw(3),
+        ShellContentRecord::AllocationRequest(ContentAllocationRequest {
+            grant: limits.grant,
+            output: output.output,
+            allocation_request_id: 1,
+            operation: 1,
+            role: 1,
+            edge: 1,
+            prior: ContentAllocationId::default(),
+            parent: ContentAllocationId::default(),
+            parent_presentation_epoch: 0,
+            anchor_parent_rect: ContentPixelRect::default(),
+            desired_width: output.local_width,
+            desired_height: 32,
+            margins: ContentMargins::default(),
+        }),
+    )?;
+    let ShellContentRecord::AllocationResult(allocation) = receive(&mut connection)? else {
+        return Err("output facts were not followed by an allocation result".into());
+    };
+    if allocation.status != 1
+        || allocation.reason != ContentReason::None as u16
+        || allocation.output != output.output
+        || allocation.logical.width != output.local_width
+        || allocation.logical.height != 32
+    {
+        return Err("panel allocation was not granted with the requested dimensions".into());
+    }
     let pixels = ContentPixels::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 128])?;
     let chunks = pixels
         .chunks(limits.max_frame_payload, limits.max_chunk_bytes)?
@@ -52,8 +84,8 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
             resource,
             width_px: pixels.width(),
             height_px: pixels.height(),
-            rendered_scale_numerator: 1,
-            rendered_scale_denominator: 1,
+            rendered_scale_numerator: allocation.scale_numerator,
+            rendered_scale_denominator: allocation.scale_denominator,
             pixel_format: 1,
             chunk_count,
             total_bytes: pixels.bytes().len() as u64,
@@ -105,10 +137,6 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     if permit.state != 1 || permit.permit_id == 0 {
         return Err("frame permit was not a fresh grant".into());
     }
-    let allocation = ContentAllocationId {
-        id: 1,
-        generation: 1,
-    };
     for (transaction, record) in [
         (
             10,
@@ -116,7 +144,7 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
                 grant: limits.grant,
                 candidate_generation: 1,
                 output: permit.output,
-                facts_generation: 1,
+                facts_generation: facts.facts_generation,
                 pacing_permit: permit.permit_id,
                 interaction_generation: 1,
                 surface_count: 1,
@@ -131,12 +159,12 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
                 candidate_generation: 1,
                 chunk_ordinal: 0,
                 surfaces: vec![ContentSurface {
-                    allocation,
-                    scale_generation: 1,
+                    allocation: allocation.allocation,
+                    scale_generation: allocation.scale_generation,
                     role: 1,
                     edge: 1,
-                    margins: ContentMargins::default(),
-                    reservation_extent: 24,
+                    margins: allocation.margins,
+                    reservation_extent: allocation.allowed_reservation_extent.min(24),
                     parent_surface_index: u16::MAX,
                     anchor_parent_rect: ContentPixelRect::default(),
                 }],
@@ -204,7 +232,7 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
         return Err("resource release identity or reason changed".into());
     }
     println!(
-        "lom_content_transport schema=1 status=complete revision={} bytes={} resource=1/1 candidate=accepted renderer_outcome={} native_presentation=false",
+        "lom_content_transport schema=1 status=complete revision={} allocation=granted bytes={} resource=1/1 candidate=accepted renderer_outcome={} native_presentation=false",
         connection.welcome().selected_revision,
         pixels.bytes().len(),
         ContentReason::RendererFailed as u16,
