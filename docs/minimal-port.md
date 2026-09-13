@@ -2,7 +2,8 @@
 
 This tranche ports presentation concepts, configuration semantics and local
 module behavior from ironbar's bundled Minimal preset. It establishes a real
-Xilem/Masonry view path, not a complete admitted native shell.
+Xilem/Masonry view path and a persistent Sophia content lifecycle, but production
+GPU admission, semantic input and native acceptance remain open.
 
 ## Pinned sources
 
@@ -19,15 +20,13 @@ Xilem/Masonry view path, not a complete admitted native shell.
 
 ## Tested boundaries
 
-The standard `tools/check.sh` gate passed locally: 16 Python gate tests and
-29 Rust integration tests at the initial Minimal landing, formatting, doc checks, zero-warning Clippy and source
-length checks. An actual manifest mutation promoting the software renderer into
-normal dependencies was rejected by the dependency audit and then restored.
-The gate remains display-free and GPU-free. It checks
+The standard `tools/check.sh` gate remains display-free and GPU-free. It checks
 KDL errors and availability, deterministic reducer replay, stale module owners,
 publication ordering, disconnect invalidation, calendar behavior, actual widget
 click-to-message routing, existing-tree rebuild/teardown, image snapshots,
-CLI refusals and the normal dependency graph. Test bodies stay outside `src/`.
+CLI refusals, the normal dependency graph and source length. Test bodies stay
+outside `src/`. An actual manifest mutation promoting the software renderer into
+normal dependencies was rejected by the dependency audit and then restored.
 
 `tests/snapshots/` contains reviewed **CPU test images of production scenes**:
 normal/narrow/fractional panels, an empty focused output and calendar variants.
@@ -79,14 +78,47 @@ there is one synchronous render/readback at a time. The widget-message queue is
 bounded to 64 and surfaces saturation explicitly. These do not establish the
 separate negotiated GPU memory/fence/retirement budgets required for a shell.
 
+## Persistent content service
+
+`lom --serve` is the protected production entry point. Its single KDL input
+contains the panel and theme. It negotiates shell revision 6 with descriptor,
+content and view-indicator capabilities, receives limits and output facts, and
+requests one panel allocation per output. Each acknowledged allocation drives
+the Xilem/Masonry scene at the Engine's exact physical dimensions and scale.
+Vello readback becomes a new immutable content resource only after rendering
+completes.
+
+The client waits for transfer admission before sending whole-row chunks, demands
+a frame, consumes its one-use permit, and submits one complete candidate. It
+waits for a nonzero native `Presented` epoch; `Prepared` alone is insufficient.
+Two resource slots per output allow the successor to present before the previous
+resource is retired, and a slot generation advances only after `Released`.
+Observations and retained response records are bounded to 64 per turn/queue.
+Changed output facts terminate the process so its supervisor can reconnect under
+a fresh epoch and obtain new allocations.
+
+A real Unix-socket integration test drives two candidate generations. It sends a
+revision-6 indicator change while the first candidate lifecycle is waiting and
+proves the second render observes it. The fixture verifies allocation, admitted
+resource transfer, permit pacing, `Prepared` then `Presented`, distinct resource
+identity, and retirement/release only after the successor presents. It does not
+prove X socket routing, a GPU driver, Engine scanout or operator-visible pixels.
+
+Sophia's production content grant is still fail-closed. The current kernel has
+no enforceable cgroup GPU-memory controller, so binding a render node or relying
+on one-job concurrency is not accepted as aggregate GPU residency enforcement.
+No native Lom session has been attempted through this path.
+
 ## Remaining acceptance
 
+- Establish enforceable aggregate GPU-memory admission for Lom's confined domain;
+  keep production content denied until it exists.
 - Extend the observed GPU diagnostic with source/binary/device identity, timing
   and memory evidence, and test the changed bounded-readback path explicitly.
 - Implement authorized live sources and scheduling. Focused title, battery,
   system information and tray are text fixtures, not functioning integrations.
-- Connect the admitted candidate path to Sophia's allocation/work-area owner and
-  separately designed GPU access and handoff. Production grants stay disabled.
+- Replace restart-on-topology-change with a tested fresh-allocation/reconnect
+  policy if supervisor restart proves insufficient.
 - Implement and verify exact *presented-candidate* action bindings. Current
   semantic messages validate module and observation identity conservatively;
   they do not implement a candidate-retention ledger, event deduplication,

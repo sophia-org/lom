@@ -126,7 +126,10 @@ pub fn parse_config(source: &str) -> Result<PanelConfig, ConfigError> {
     {
         return Err(at(source, 0, "expected version 1 followed by one panel"));
     }
-    let node = &doc.nodes()[1];
+    parse_panel(source, &doc.nodes()[1])
+}
+
+pub(crate) fn parse_panel(source: &str, node: &KdlNode) -> Result<PanelConfig, ConfigError> {
     let name = args(source, node, 1)?[0]
         .as_string()
         .filter(|s| !s.is_empty())

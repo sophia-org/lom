@@ -1,8 +1,8 @@
 # Lom Architecture
 
 **Role:** intended client architecture and implementation constraints.
-**Status:** client design with a tested local Minimal UI prototype; native shell
-integration and GPU/native acceptance remain incomplete. See
+**Status:** client design with a tested local Minimal UI and persistent content
+lifecycle; production GPU admission, semantic input and native acceptance remain incomplete. See
 [implementation evidence](docs/minimal-port.md).
 
 Implementation must follow the [style guide](docs/style-guide.md), including
@@ -188,9 +188,10 @@ permits premature GPU storage reuse. Unknown, duplicate, or revoked activations
 follow the negotiated rejection/acknowledgement rules rather than being replayed
 into a replacement tree or connection.
 
-The following sequence is the intended first workflow, not evidence that the
-necessary content messages or GPU handoff have been implemented. Rendering is
-scheduled under negotiated pacing; local GPU completion is not presentation.
+The panel subset of the following sequence is implemented and exercised against
+a real-socket protocol fixture. Popout actions and native acceptance remain
+open. Rendering is scheduled under negotiated pacing; local GPU completion is
+not presentation.
 
 ```mermaid
 sequenceDiagram

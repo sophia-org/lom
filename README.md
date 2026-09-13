@@ -25,12 +25,12 @@ data, not an admitted shell or proof of the GPU path.
 | Component | Current evidence |
 | --- | --- |
 | KDL panel/theme configuration | Validated with positioned diagnostics and explicit availability reporting |
-| Labels and workspaces | Actual views; naming, filtering, ordering and state styling; live indicator adapter pending |
+| Labels and workspaces | Actual views plus revision-6 indicator intake, naming, filtering, ordering and state styling |
 | Clock/calendar | Explicit time observations, navigation, week numbers, open/dismiss intent; no native allocation yet |
 | Focused title, battery, system info, tray | Fixture-backed text presentations only; authorized integrations and full features pending |
 | Xilem/Masonry host | Windowless construction, rebuild, paint and teardown tested |
 | GPU preview | Vello/Vulkan command implemented and compiled; GPU execution not yet accepted |
-| Native Sophia shell | Protected resource and complete-candidate conformance passes; allocation, native rendering, input and acceptance remain open |
+| Native Sophia shell | Persistent allocation/upload/pacing/presentation/retirement client passes a real-socket fixture; production GPU admission and native acceptance remain open |
 
 The current preview uses three equally sized regions with independent clipping.
 Its center stays centered; narrow layouts may clip module content. Sizes in KDL
@@ -64,8 +64,22 @@ It refuses a reported CPU adapter. GPU failures return a nonzero exit and retain
 `failure.txt`; no CPU fallback is selected. Readback is diagnostic output,
 not an admitted Sophia transport. No X11, Wayland or Sophia connection is opened.
 
-Running `lom` without arguments still exits with status 2: native shell startup
-is unavailable. Nothing here installs or changes the current desktop.
+The production service uses one protected, supervisor-mounted document containing
+the panel followed by its theme:
+
+```sh
+lom --serve
+```
+
+`--serve` is a supervisor entry point, not a command to run from an ordinary
+terminal. It requires `SOPHIA_SHELL_SOCKET`, `SOPHIA_SHELL_CONFIG` and
+`SOPHIA_SHELL_BAR_THICKNESS`, negotiates revision 6, allocates one panel per
+published output, renders with Vello, and waits for actual `Presented` outcomes
+before retiring replaced resources. The current Sophia profile denies production
+content because this kernel exposes no enforceable cgroup GPU-memory controller;
+Lom does not weaken that gate or fall back to an ambient display. Running `lom`
+without a command exits with status 2. Nothing here installs or changes the
+current desktop.
 
 `lom content-proof --socket PATH` is reserved for Sophia's protected conformance
 host. It requests one panel allocation, uploads canonical pixels, raises a frame

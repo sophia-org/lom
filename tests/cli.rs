@@ -11,14 +11,14 @@ fn run(arguments: &[&str]) -> Output {
 }
 
 #[test]
-fn help_succeeds_and_states_the_native_limit() {
+fn help_succeeds_and_names_the_protected_service() {
     for flag in ["--help", "-h"] {
         let result = run(&[flag]);
         assert!(result.status.success());
         assert!(result.stderr.is_empty());
         let text = String::from_utf8(result.stdout).expect("help is UTF-8");
         assert!(text.contains("Usage: lom"));
-        assert!(text.contains("Native shell startup is not implemented yet."));
+        assert!(text.contains("--serve is the persistent protected Sophia content-shell"));
     }
 }
 
@@ -36,12 +36,21 @@ fn version_matches_the_package() {
 }
 
 #[test]
-fn default_startup_refuses_to_claim_a_running_shell() {
+fn default_startup_requires_an_explicit_command() {
     let result = run(&[]);
     assert_eq!(result.status.code(), Some(2));
     assert!(result.stdout.is_empty());
     let text = String::from_utf8(result.stderr).expect("diagnostic is UTF-8");
-    assert!(text.contains("native shell startup is not implemented"));
+    assert!(text.contains("no command supplied"));
+}
+
+#[test]
+fn protected_service_requires_supervisor_supplied_inputs_before_gpu_setup() {
+    let result = run(&["--serve"]);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(result.stdout.is_empty());
+    let text = String::from_utf8(result.stderr).expect("diagnostic is UTF-8");
+    assert!(text.contains("SOPHIA_SHELL_SOCKET is required"));
 }
 
 #[test]

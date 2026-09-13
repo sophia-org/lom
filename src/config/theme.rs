@@ -152,7 +152,10 @@ pub fn parse_theme(source: &str) -> Result<Theme, ConfigError> {
             column: 1,
         });
     }
-    let node = &nodes[1];
+    parse_theme_node(source, &nodes[1])
+}
+
+pub(crate) fn parse_theme_node(source: &str, node: &kdl::KdlNode) -> Result<Theme, ConfigError> {
     let name = args(source, node, 1)?[0]
         .as_string()
         .ok_or_else(|| error(source, node, "expected theme name"))?

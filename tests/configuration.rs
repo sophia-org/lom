@@ -160,3 +160,14 @@ fn parsing_only_clock_formats_are_rejected_before_view_formatting() {
     let source = "version 1\npanel \"x\" { end { clock \"time\" { format \"%#z\"; }; }; }";
     assert!(parse_config(source).is_err());
 }
+
+#[test]
+fn production_shell_document_keeps_panel_and_theme_in_one_mount() {
+    let source = include_str!("../examples/minimal/shell.kdl");
+    let (config, theme) = lom::config::parse_shell_config(source).unwrap();
+    assert_eq!(config.name, "main");
+    assert_eq!(theme.name, "minimal");
+    lom::runtime::validate_theme(&config, &theme).unwrap();
+    assert!(lom::config::parse_config(source).is_err());
+    assert!(lom::config::parse_shell_config(support::CONFIG).is_err());
+}

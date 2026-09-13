@@ -6,6 +6,29 @@ mod theme;
 pub use parse::{ConfigError, parse_config};
 pub use theme::{Color, Style, StyleOverride, Theme, parse_theme};
 
+/// Parse the production one-file document. The protected shell domain receives
+/// exactly one mounted configuration, so panel and theme must travel together.
+pub fn parse_shell_config(source: &str) -> Result<(PanelConfig, Theme), ConfigError> {
+    let document = parse::document(source)?;
+    let nodes = document.nodes();
+    if nodes.len() != 3
+        || nodes[0].name().value() != "version"
+        || parse::number(source, &nodes[0], 1, 1)? != 1
+        || nodes[1].name().value() != "panel"
+        || nodes[2].name().value() != "theme"
+    {
+        return Err(ConfigError {
+            message: "expected version 1, one panel, then one theme".into(),
+            line: 1,
+            column: 1,
+        });
+    }
+    Ok((
+        parse::parse_panel(source, &nodes[1])?,
+        theme::parse_theme_node(source, &nodes[2])?,
+    ))
+}
+
 /// Position of the desired panel; placement remains Engine-owned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Position {

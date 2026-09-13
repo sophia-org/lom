@@ -1,8 +1,12 @@
 # Configuration and ironbar migration
 
 Lom accepts KDL **v2** documents with `version 1` naming Lom's configuration
-schema. Both configuration and theme are explicit command-line files in this
-tranche. No legacy format importer, XDG discovery or live file watcher exists yet.
+schema. Production receives one supervisor-mounted file containing exactly a
+panel followed by its theme; `examples/minimal/shell.kdl` is the complete
+example. The display-free `check-config` and `preview` diagnostics retain
+separate `--config` and `--theme` inputs so each parser remains independently
+inspectable. No legacy format importer, XDG discovery or live file watcher
+exists yet.
 
 The complete starting point is `examples/minimal/`. Module names are required,
 nonempty and unique. A document contains exactly one named panel, with optional
@@ -63,11 +67,14 @@ not integrated yet; the calendar uses Chrono's English month/day presentation.
 Opening resets the calendar to the observed month. Ticks preserve navigation.
 Navigation across year/leap-day boundaries and dismissal are reducer-tested.
 
-KDL position, margins and popup gap express **desired placement**, retained in
-the model for a future Engine allocation request. The local panel PNG represents
-one allocation's content; it does not draw a screen or simulate reservation,
-margin placement or native popout anchoring. `--width` means physical long-axis
-extent (height for a vertical panel); thickness is `ceil(height × scale)`.
+KDL position and margins express **desired placement**. The protected service
+submits them in an Engine allocation request, then renders only the acknowledged
+physical rectangle and scale. It caps reservation at the smaller of the admitted
+allowance and the rendered panel thickness. `popup-gap` remains local popout
+intent because native popouts are not implemented. The diagnostic panel PNG does
+not draw a screen or simulate reservation, margin placement or native anchoring.
+For `preview`, `--width` means physical long-axis extent (height for a vertical
+panel); thickness is `ceil(height × scale)`.
 
 Unknown or unsupported settings are errors, not ignored compatibility promises.
 This includes scripts, favorites, profiles, automatic hiding, tooltips, images,
@@ -76,7 +83,7 @@ service actions. Native output facts do not currently supply ironbar's connector
 names, so monitor mapping cannot be inferred from a name. `icon_size`, battery
 formatting and per-service options remain work for their actual module adapters.
 Documents are bounded to 256 KiB and panels to 64 modules. These are **local
-parser/preview limits**, not advertised Sophia capability limits.
+parser and client limits**, not advertised Sophia capability limits.
 
 ## KDL themes
 

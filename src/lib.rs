@@ -7,5 +7,6 @@ pub mod modules;
 pub mod protocol;
 pub mod render;
 pub mod runtime;
+pub mod service;
 pub mod ui;
 pub mod update;
