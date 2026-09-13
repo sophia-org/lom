@@ -5,9 +5,13 @@ use crate::ui::PreviewScene;
 use masonry_imaging::TextureRenderer;
 use std::path::Path;
 
+mod admission;
 mod completion;
 mod readback;
+mod worker;
+pub use admission::GpuGrant;
 use readback::PendingReadback;
+pub use worker::RendererWorker;
 
 /// Reusable Vello GPU renderer for sequential, bounded preview images.
 pub struct GpuPreview {
@@ -21,7 +25,23 @@ impl GpuPreview {
     /// Initialize Vulkan without a surface. Software adapters are explicitly refused.
     ///
     /// Call only for an explicitly requested GPU preview, never during configuration validation.
-    pub fn new() -> Result<Self, String> {
+    pub fn new(grant: &GpuGrant) -> Result<Self, String> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::VULKAN,
+            ..Default::default()
+        });
+        let mut adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::VULKAN));
+        let infos = adapters
+            .iter()
+            .map(wgpu::Adapter::get_info)
+            .collect::<Vec<_>>();
+        let selected = admission::select_adapter(grant, &infos)?;
+        let adapter = adapters.swap_remove(selected);
+        Self::from_adapter(adapter)
+    }
+
+    /// Initialize an explicit offscreen diagnostic outside a Sophia shell.
+    pub fn new_diagnostic() -> Result<Self, String> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
             ..Default::default()
@@ -31,18 +51,22 @@ impl GpuPreview {
             force_fallback_adapter: false,
             compatible_surface: None,
         }))
-        .map_err(|e| format!("no Vulkan GPU adapter: {e}"))?;
-        let info = adapter.get_info();
-        if matches!(info.device_type, wgpu::DeviceType::Cpu) {
+        .map_err(|error| format!("no Vulkan GPU adapter: {error}"))?;
+        if adapter.get_info().device_type == wgpu::DeviceType::Cpu {
             return Err("software adapter refused: GPU preview has no CPU fallback".into());
         }
+        Self::from_adapter(adapter)
+    }
+
+    fn from_adapter(adapter: wgpu::Adapter) -> Result<Self, String> {
+        let info = adapter.get_info();
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("Lom explicit offscreen preview"),
             ..Default::default()
         }))
-        .map_err(|e| format!("GPU device request: {e}"))?;
+        .map_err(|error| format!("GPU device request: {error}"))?;
         let renderer = masonry_imaging::vello::new_target_renderer(device.clone(), queue.clone())
-            .map_err(|e| e.to_string())?;
+            .map_err(|error| error.to_string())?;
         Ok(Self {
             renderer,
             adapter: info,

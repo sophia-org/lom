@@ -1,8 +1,9 @@
 # Lom Architecture
 
 **Role:** intended client architecture and implementation constraints.
-**Status:** client design with a tested local Minimal UI and persistent content
-lifecycle; production GPU admission, semantic input and native acceptance remain incomplete. See
+**Status:** client design with a tested local Minimal UI, persistent content
+lifecycle, and implemented direct-GPU grant consumer; semantic input and native
+GPU acceptance remain incomplete. See
 [implementation evidence](docs/minimal-port.md).
 
 Implementation must follow the [style guide](docs/style-guide.md), including
@@ -249,11 +250,12 @@ from inherited display variables or an arbitrary first enumerated adapter. The d
 They exchange handles and observations instead of sharing mutable ownership.
 Shell invalidation requests work; it does not establish an independent,
 unbounded presentation clock. Use negotiated pacing and a bounded renderer
-schedule. The target runtime has one GPU worker separate from protocol/control
-progress; it exchanges owned messages with the TEA runtime. Dirty work is
-coalesced per output and unchanged resources are reused. The present service
-still calls a synchronous renderer; separating it is implementation work, not
-behavior established by this document.
+schedule. The runtime has one capacity-one GPU worker separate from
+protocol/control progress; it exchanges owned requests and completions with the
+TEA runtime. Dirty work is coalesced per output and unchanged resources are
+reused. GPU completion is polled without blocking protocol intake. An expired
+job remains quarantined and fails the service rather than allowing its resources
+to be silently reused.
 
 | Fact | What it proves |
 | --- | --- |

@@ -37,17 +37,18 @@ const OUTPUT: ContentOutputId = ContentOutputId {
 
 struct FixedRenderer {
     calls: usize,
+    completed: Option<ContentPixels>,
+    started: Option<std::sync::mpsc::Sender<()>>,
+    release: std::sync::mpsc::Receiver<()>,
+    gate_first: bool,
 }
 impl ContentRenderer for FixedRenderer {
-    fn render(
-        &mut self,
-        model: Model,
-        width: u32,
-        height: u32,
-        scale: f64,
-    ) -> Result<ContentPixels, String> {
+    fn submit(&mut self, model: Model, width: u32, height: u32, scale: f64) -> Result<(), String> {
         assert_eq!((width, height, scale), (8, 48, 2.0));
         self.calls += 1;
+        if let Some(started) = self.started.take() {
+            started.send(()).unwrap();
+        }
         let expected_generation = 5 + self.calls as u64;
         assert_eq!(model.workspaces.generation, expected_generation);
         assert_eq!(model.workspaces.active_output, Some(OUTPUT.id));
@@ -56,7 +57,22 @@ impl ContentRenderer for FixedRenderer {
             if self.calls == 1 { "one" } else { "two" }
         );
         assert!(model.workspaces.entries[0].active);
-        ContentPixels::from_rgba8(width, height, vec![255; (width * height * 4) as usize])
+        self.completed = Some(ContentPixels::from_rgba8(
+            width,
+            height,
+            vec![255; (width * height * 4) as usize],
+        )?);
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Result<Option<ContentPixels>, String> {
+        if self.gate_first {
+            if self.release.try_recv().is_err() {
+                return Ok(None);
+            }
+            self.gate_first = false;
+        }
+        Ok(self.completed.take())
     }
 }
 
@@ -69,7 +85,16 @@ fn persistent_service_negotiates_allocates_uploads_and_waits_for_native_presenta
     ));
     let listener = UnixListener::bind(&path).unwrap();
     let (done_sender, done_receiver) = std::sync::mpsc::channel();
-    let server = std::thread::spawn(move || serve_one(listener.accept().unwrap().0, done_receiver));
+    let (started_sender, started_receiver) = std::sync::mpsc::channel();
+    let (release_sender, release_receiver) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        serve_one(
+            listener.accept().unwrap().0,
+            done_receiver,
+            started_receiver,
+            release_sender,
+        )
+    });
     let capabilities = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS;
@@ -85,8 +110,20 @@ fn persistent_service_negotiates_allocates_uploads_and_waits_for_native_presenta
     .unwrap();
     let (config, theme) =
         parse_shell_config(include_str!("../examples/minimal/shell.kdl")).unwrap();
-    let mut service =
-        ShellService::new(connection, config, theme, 48, FixedRenderer { calls: 0 }).unwrap();
+    let mut service = ShellService::new(
+        connection,
+        config,
+        theme,
+        48,
+        FixedRenderer {
+            calls: 0,
+            completed: None,
+            started: Some(started_sender),
+            release: release_receiver,
+            gate_first: true,
+        },
+    )
+    .unwrap();
     let mut presented = 0;
     while presented < 2 {
         presented += service.step().unwrap();
@@ -96,7 +133,12 @@ fn persistent_service_negotiates_allocates_uploads_and_waits_for_native_presenta
     let _ = std::fs::remove_file(path);
 }
 
-fn serve_one(mut stream: UnixStream, done: std::sync::mpsc::Receiver<()>) {
+fn serve_one(
+    mut stream: UnixStream,
+    done: std::sync::mpsc::Receiver<()>,
+    render_started: std::sync::mpsc::Receiver<()>,
+    render_release: std::sync::mpsc::Sender<()>,
+) {
     let hello = read_frame(&mut stream);
     let ShellV1ClientHello {
         minimum_revision,
@@ -208,7 +250,7 @@ fn serve_one(mut stream: UnixStream, done: std::sync::mpsc::Receiver<()>) {
         }),
     );
 
-    let first = serve_frame(&mut stream, allocation, 1, 22, 31);
+    render_started.recv_timeout(Duration::from_secs(2)).unwrap();
     for frame in encode_shell_indicator_snapshot(
         TransactionId::from_raw(50),
         &ShellIndicatorSnapshot {
@@ -230,6 +272,8 @@ fn serve_one(mut stream: UnixStream, done: std::sync::mpsc::Receiver<()>) {
     {
         stream.write_all(&frame).unwrap();
     }
+    render_release.send(()).unwrap();
+    let first = serve_frame(&mut stream, allocation, 1, 22, 31);
     let second = serve_frame(&mut stream, allocation, 2, 23, 32);
     assert_ne!(first, second, "a live resource cannot be overwritten");
     let (retire_tx, ShellContentRecord::ResourceRetire(retire)) = receive(&mut stream) else {

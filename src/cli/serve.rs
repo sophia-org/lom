@@ -2,12 +2,9 @@
 
 use crate::{
     config::parse_shell_config,
-    model::Model,
-    protocol::ContentPixels,
-    render::GpuPreview,
+    render::{GpuGrant, RendererWorker},
     runtime::validate_theme,
-    service::{ContentRenderer, ShellService},
-    ui::PreviewDriver,
+    service::ShellService,
 };
 use sophia_protocol::{
     SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE, SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER,
@@ -47,30 +44,17 @@ pub(super) fn run() -> Result<(), String> {
         },
     )
     .map_err(|error| format!("shell negotiation failed: {error}"))?;
-    let mut service =
-        ShellService::new(connection, config, theme, allowance, VelloRenderer::new()?)?;
+    let grant = GpuGrant::from_environment(connection.connection_epoch())?;
+    let mut service = ShellService::new(
+        connection,
+        config,
+        theme,
+        allowance,
+        RendererWorker::start(grant)?,
+    )?;
     loop {
         if service.step()? == 0 {
             std::thread::sleep(IDLE_POLL);
         }
-    }
-}
-
-struct VelloRenderer(GpuPreview);
-impl VelloRenderer {
-    fn new() -> Result<Self, String> {
-        GpuPreview::new().map(Self)
-    }
-}
-impl ContentRenderer for VelloRenderer {
-    fn render(
-        &mut self,
-        model: Model,
-        width: u32,
-        height: u32,
-        scale: f64,
-    ) -> Result<ContentPixels, String> {
-        let mut driver = PreviewDriver::new(model, width, height, scale, false)?;
-        self.0.readback_content(&mut driver.scene())
     }
 }

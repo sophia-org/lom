@@ -59,7 +59,7 @@ pub(super) fn run(
     // Reserve a new artifact directory before GPU initialization; never replace prior evidence.
     std::fs::create_dir(&output).map_err(|e| format!("output must be a new directory: {e}"))?;
     let result = (|| {
-        let mut gpu = GpuPreview::new()?;
+        let mut gpu = GpuPreview::new_diagnostic()?;
         gpu.write_png(&mut panel.scene(), &output.join("panel.png"))?;
         if let Some(mut calendar) = calendar {
             gpu.write_png(&mut calendar.scene(), &output.join("calendar.png"))?;

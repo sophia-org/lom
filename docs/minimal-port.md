@@ -121,15 +121,15 @@ The [paired critical path](notes/plans/pf4er77j-lom-daily-driver-critical-path.m
 separates the minimum desktop from parallel provider work and measurement-led
 transport/GPU-bridge candidates. These tasks remain open:
 
-- Implement and verify explicit direct GPU launch admission and matching Lom
-  device selection; keep production denied until the actual resources and
-  compositor-owned backing charges are established.
+- Physically verify the implemented direct GPU launch grant and exact Lom
+  adapter selection against a separately authorized contained Sophia run.
 - Extend the observed GPU diagnostic with source/binary/device identity, timing
   and memory evidence, and test the changed bounded-readback path explicitly.
 - Implement authorized live sources and scheduling. Focused title, battery,
   system information and tray are text fixtures, not functioning integrations.
-- Keep protocol/control progress independent of GPU work; add per-output dirty
-  scheduling and tested fresh-allocation/reconnect recovery for topology changes.
+- Extend the capacity-one GPU worker with per-output dirty scheduling and tested
+  fresh-allocation/reconnect recovery for topology changes; protocol observation
+  already continues while one render is outstanding.
 - Preserve descriptor launcher/switcher workflows within the same admitted
   connection; Narthex is a separate-session fallback, not a second shell slot.
 - Implement and verify exact *presented-candidate* action bindings. Current

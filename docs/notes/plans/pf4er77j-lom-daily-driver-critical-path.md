@@ -86,6 +86,16 @@ kernel, records its capabilities/driver and image result, and verifies the
 changed readback path. Mocked selection and the old preview cannot close that
 hardware part; no ordinary Sophia desktop startup is needed for it.
 
+Implementation checkpoint: Lom validates the connection-scoped grant, private
+render-node character-device identity, and an exact unique non-CPU Vulkan
+adapter, including PCI identity when Sophia publishes one. Production rendering
+runs on a capacity-one worker with a 2000 ms recovery deadline while the service
+continues protocol observation. Deterministic tests cover denied and stale
+grants, ambiguous and CPU adapters, one-job ownership, quarantine after expiry,
+and an indicator update arriving while rendering is outstanding. This does not
+close t003: the paired contained GPU/device-exclusion proof and native retirement
+evidence remain separately authorized and unrun.
+
 ### t004
 
 Export a target table with each complete view candidate. Retain the exact

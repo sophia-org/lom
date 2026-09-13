@@ -35,14 +35,11 @@ const CANDIDATE_REJECTED: u16 = 3;
 
 /// Produces one complete panel resource from passive application state.
 pub trait ContentRenderer {
-    /// Render exactly the acknowledged physical allocation and scale.
-    fn render(
-        &mut self,
-        model: Model,
-        width: u32,
-        height: u32,
-        scale: f64,
-    ) -> Result<ContentPixels, String>;
+    /// Queue exactly one render for the acknowledged physical allocation.
+    fn submit(&mut self, model: Model, width: u32, height: u32, scale: f64) -> Result<(), String>;
+
+    /// Poll the sole in-flight render without blocking protocol ownership.
+    fn poll(&mut self) -> Result<Option<ContentPixels>, String>;
 }
 
 struct Panel {
@@ -78,6 +75,8 @@ pub struct ShellService<R> {
     last_second: u64,
     latest_indicators: Option<ShellIndicatorSnapshot>,
     pending_content: VecDeque<ShellContentRecord>,
+    rendering_panel: Option<usize>,
+    next_panel: Option<usize>,
 }
 
 impl<R: ContentRenderer> ShellService<R> {
@@ -115,6 +114,8 @@ impl<R: ContentRenderer> ShellService<R> {
             last_second: unix_second(),
             latest_indicators: None,
             pending_content: VecDeque::new(),
+            rendering_panel: None,
+            next_panel: None,
         };
         service.allocate_panels(allowance)?;
         Ok(service)
@@ -143,15 +144,37 @@ impl<R: ContentRenderer> ShellService<R> {
             }
             self.dirty |= observed_clock;
         }
-        if !self.dirty {
+        if let Some(index) = self.rendering_panel {
+            let Some(pixels) = self.renderer.poll()? else {
+                return Ok(0);
+            };
+            self.rendering_panel = None;
+            self.present(index, pixels)?;
+            return Ok(1);
+        }
+        if self.next_panel.is_none() && self.dirty {
+            self.dirty = false;
+            self.next_panel = Some(0);
+        }
+        let Some(index) = self.next_panel else {
+            return Ok(0);
+        };
+        if index == self.panels.len() {
+            self.next_panel = None;
             return Ok(0);
         }
-        // Clear before the blocking lifecycle. An indicator arriving while
-        // this candidate waits for presentation must schedule a successor.
-        self.dirty = false;
-        let count = self.panels.len();
-        self.present_all()?;
-        Ok(count)
+        let panel = &self.panels[index];
+        let scale = f64::from(panel.allocation.scale_numerator)
+            / f64::from(panel.allocation.scale_denominator);
+        self.renderer.submit(
+            panel.model.clone(),
+            panel.allocation.pixel.width,
+            panel.allocation.pixel.height,
+            scale,
+        )?;
+        self.rendering_panel = Some(index);
+        self.next_panel = Some(index + 1);
+        Ok(0)
     }
     fn transaction(&mut self) -> Result<TransactionId, String> {
         let value = self.next_transaction;
@@ -300,30 +323,17 @@ impl<R: ContentRenderer> ShellService<R> {
         Ok(())
     }
 
-    fn present_all(&mut self) -> Result<(), String> {
-        for index in 0..self.panels.len() {
-            self.present(index)?;
-        }
-        Ok(())
-    }
-
-    fn present(&mut self, index: usize) -> Result<(), String> {
-        let (width, height, scale, model, slot_index, slot, old, candidate) = {
+    fn present(&mut self, index: usize, pixels: ContentPixels) -> Result<(), String> {
+        let (slot_index, slot, old, candidate) = {
             let panel = &self.panels[index];
             let slot_index = panel.current_slot.map_or(0, |slot| 1 - slot);
             (
-                panel.allocation.pixel.width,
-                panel.allocation.pixel.height,
-                f64::from(panel.allocation.scale_numerator)
-                    / f64::from(panel.allocation.scale_denominator),
-                panel.model.clone(),
                 slot_index,
                 panel.resources[slot_index],
                 panel.current_slot.map(|old| panel.resources[old]),
                 panel.candidate_generation,
             )
         };
-        let pixels = self.renderer.render(model, width, height, scale)?;
         let resource = ContentResourceId {
             id: slot.id,
             generation: slot.generation,
