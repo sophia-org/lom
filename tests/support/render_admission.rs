@@ -23,6 +23,14 @@ fn adapter(
     }
 }
 
+fn drm(major: u32, minor: u32) -> Option<DrmRenderIdentity> {
+    Some(DrmRenderIdentity {
+        has_render: true,
+        major,
+        minor,
+    })
+}
+
 #[test]
 fn grant_refuses_denied_stale_and_non_device_environments() {
     let mut values = BTreeMap::from([
@@ -67,7 +75,24 @@ fn adapter_selection_is_exact_unique_and_never_cpu() {
             wgpu::DeviceType::IntegratedGpu,
         ),
     ];
-    assert_eq!(select_adapter(&grant, &adapters), Ok(1));
+    assert_eq!(
+        select_adapter(&grant, &adapters, &[drm(226, 129), drm(226, 128)]),
+        Ok(1)
+    );
+    assert_eq!(
+        select_adapter(
+            &grant,
+            &[adapter(
+                "0000:ff:00.0",
+                0xffff,
+                0xffff,
+                wgpu::DeviceType::DiscreteGpu,
+            )],
+            &[drm(226, 128)],
+        ),
+        Ok(0),
+        "PCI diagnostics must neither authorize nor veto an exact DRM identity"
+    );
     assert!(
         select_adapter(
             &grant,
@@ -85,6 +110,7 @@ fn adapter_selection_is_exact_unique_and_never_cpu() {
                     wgpu::DeviceType::DiscreteGpu
                 ),
             ],
+            &[drm(226, 128), drm(226, 128)],
         )
         .is_err()
     );
@@ -96,7 +122,8 @@ fn adapter_selection_is_exact_unique_and_never_cpu() {
                 0x1002,
                 0x744c,
                 wgpu::DeviceType::Cpu
-            )]
+            )],
+            &[drm(226, 128)],
         )
         .is_err()
     );
@@ -104,37 +131,81 @@ fn adapter_selection_is_exact_unique_and_never_cpu() {
     assert_eq!(
         select_adapter(
             &grant,
-            &[adapter("", 0x1002, 0x744c, wgpu::DeviceType::DiscreteGpu)]
+            &[adapter("", 0x1002, 0x744c, wgpu::DeviceType::DiscreteGpu)],
+            &[drm(226, 128)],
         ),
         Ok(0)
     );
     assert!(
         select_adapter(
             &grant,
-            &[adapter("", 0x1002, 0x164e, wgpu::DeviceType::DiscreteGpu)]
+            &[adapter("", 0x1002, 0x164e, wgpu::DeviceType::DiscreteGpu)],
+            &[drm(226, 129)],
         )
         .is_err()
     );
+    assert!(
+        select_adapter(
+            &grant,
+            &[adapter(
+                "0000:01:00.0",
+                0x1002,
+                0x744c,
+                wgpu::DeviceType::DiscreteGpu,
+            )],
+            &[None],
+        )
+        .is_err()
+    );
+    assert!(
+        select_adapter(
+            &grant,
+            &[adapter(
+                "0000:01:00.0",
+                0x1002,
+                0x744c,
+                wgpu::DeviceType::DiscreteGpu,
+            )],
+            &[Some(DrmRenderIdentity {
+                has_render: false,
+                major: 226,
+                minor: 128,
+            })],
+        )
+        .is_err()
+    );
+    assert!(select_adapter(&grant, &adapters, &[drm(226, 128)]).is_err());
 }
 
 #[test]
-fn pci_fallback_identity_is_complete_bounded_and_hexadecimal() {
+fn optional_pci_diagnostics_are_independent_bounded_and_hexadecimal() {
     let values = BTreeMap::from([
         (GPU_PCI_BUS_ID_ENV.to_owned(), "0000:03:00.0".to_owned()),
         (GPU_PCI_VENDOR_ID_ENV.to_owned(), "1002".to_owned()),
         (GPU_PCI_DEVICE_ID_ENV.to_owned(), "744c".to_owned()),
     ]);
     assert_eq!(
-        pci_identity(&|key: &str| values.get(key).cloned()).unwrap(),
-        Some(PciIdentity {
-            bus_id: "0000:03:00.0".to_owned(),
-            vendor_id: 0x1002,
-            device_id: 0x744c,
-        })
+        pci_diagnostics(&|key: &str| values.get(key).cloned()).unwrap(),
+        PciDiagnostics {
+            bus_id: Some("0000:03:00.0".to_owned()),
+            vendor_id: Some(0x1002),
+            device_id: Some(0x744c),
+        }
+    );
+
+    let mut partial = values.clone();
+    partial.remove(GPU_PCI_DEVICE_ID_ENV);
+    assert_eq!(
+        pci_diagnostics(&|name| partial.get(name).cloned()).unwrap(),
+        PciDiagnostics {
+            bus_id: Some("0000:03:00.0".into()),
+            vendor_id: Some(0x1002),
+            device_id: None,
+        },
+        "diagnostic absence must not invalidate exact DRM authorization"
     );
 
     for (key, value) in [
-        (GPU_PCI_DEVICE_ID_ENV, None),
         (GPU_PCI_VENDOR_ID_ENV, Some("not-hex")),
         (GPU_PCI_DEVICE_ID_ENV, Some("10000")),
     ] {
@@ -147,7 +218,7 @@ fn pci_fallback_identity_is_complete_bounded_and_hexadecimal() {
                 malformed.remove(key);
             }
         }
-        assert!(pci_identity(&|name| malformed.get(name).cloned()).is_err());
+        assert!(pci_diagnostics(&|name| malformed.get(name).cloned()).is_err());
     }
 }
 

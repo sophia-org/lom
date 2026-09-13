@@ -7,6 +7,7 @@ use std::path::Path;
 
 mod admission;
 mod completion;
+mod drm;
 mod readback;
 mod worker;
 pub use admission::GpuGrant;
@@ -24,12 +25,16 @@ pub struct GpuAdmissionEvidence {
     pub device_major: u32,
     /// Kernel character-device identity observed inside the domain.
     pub device_minor: u32,
-    /// PCI identity when both Sophia and Vulkan expose one.
+    /// Optional PCI bus diagnostic supplied by Sophia.
     pub pci_bus_id: Option<String>,
     /// PCI vendor identifier supplied by Sophia.
     pub pci_vendor_id: Option<u32>,
     /// PCI device identifier supplied by Sophia.
     pub pci_device_id: Option<u32>,
+    /// DRM render-node identity reported by the selected Vulkan adapter.
+    pub adapter_render_major: u32,
+    /// DRM render-node identity reported by the selected Vulkan adapter.
+    pub adapter_render_minor: u32,
     /// Vulkan adapter selected after applying the exact grant.
     pub adapter: wgpu::AdapterInfo,
     /// Sorted entries visible in the private `/dev/dri` directory.
@@ -37,9 +42,24 @@ pub struct GpuAdmissionEvidence {
 }
 
 impl GpuAdmissionEvidence {
-    fn collect(grant: &GpuGrant, adapter: &wgpu::AdapterInfo) -> Result<Self, String> {
+    fn collect(
+        grant: &GpuGrant,
+        adapter: &wgpu::AdapterInfo,
+        adapter_drm: drm::DrmRenderIdentity,
+    ) -> Result<Self, String> {
+        if !adapter_drm.has_render
+            || adapter_drm.major != grant.device_major
+            || adapter_drm.minor != grant.device_minor
+        {
+            return Err("selected Vulkan adapter no longer matches the GPU grant".into());
+        }
         let visible_dri_entries = admission::visible_dri_entries(std::path::Path::new("/dev/dri"))?;
-        if visible_dri_entries.as_slice() != ["renderD128"] {
+        let expected = grant
+            .render_node
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("GPU grant render-node path has no UTF-8 basename")?;
+        if visible_dri_entries.as_slice() != [expected] {
             return Err(format!(
                 "GPU domain exposes unexpected DRM devices: {}",
                 visible_dri_entries.join(",")
@@ -53,6 +73,8 @@ impl GpuAdmissionEvidence {
             pci_bus_id: grant.pci_bus_id.clone(),
             pci_vendor_id: grant.pci_vendor_id,
             pci_device_id: grant.pci_device_id,
+            adapter_render_major: adapter_drm.major,
+            adapter_render_minor: adapter_drm.minor,
             adapter: adapter.clone(),
             visible_dri_entries,
         })
@@ -61,11 +83,13 @@ impl GpuAdmissionEvidence {
     /// Stable diagnostic record used by isolated and native acceptance gates.
     pub fn record(&self) -> String {
         format!(
-            "lom_gpu_admission schema=1 status=ready grant_epoch={} render_node={} device_major={} device_minor={} pci_bus_id={} pci_vendor_id={} pci_device_id={} backend={:?} device_type={:?} adapter_name={:?} driver={:?} visible_dri_entries={}",
+            "lom_gpu_admission schema=2 status=ready grant_epoch={} render_node={} device_major={} device_minor={} selection_method=drm_dev_t adapter_render_major={} adapter_render_minor={} adapter_has_render=true pci_bus_id={} pci_vendor_id={} pci_device_id={} backend={:?} device_type={:?} adapter_name={:?} driver={:?} visible_dri_entries={}",
             self.grant_epoch,
             self.render_node.display(),
             self.device_major,
             self.device_minor,
+            self.adapter_render_major,
+            self.adapter_render_minor,
             self.pci_bus_id.as_deref().unwrap_or("none"),
             self.pci_vendor_id
                 .map(|value| format!("{value:04x}"))
@@ -91,12 +115,15 @@ pub struct GpuPreview {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pending: Option<PendingReadback>,
+    adapter_drm: Option<drm::DrmRenderIdentity>,
+    _render_node: Option<std::fs::File>,
 }
 impl GpuPreview {
     /// Initialize Vulkan without a surface. Software adapters are explicitly refused.
     ///
     /// Call only for an explicitly requested GPU preview, never during configuration validation.
     pub fn new(grant: &GpuGrant) -> Result<Self, String> {
+        let render_node = grant.open_render_node()?;
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
             ..Default::default()
@@ -106,9 +133,14 @@ impl GpuPreview {
             .iter()
             .map(wgpu::Adapter::get_info)
             .collect::<Vec<_>>();
-        let selected = admission::select_adapter(grant, &infos)?;
+        let drm = adapters
+            .iter()
+            .map(drm::adapter_render_identity)
+            .collect::<Result<Vec<_>, _>>()?;
+        let selected = admission::select_adapter(grant, &infos, &drm)?;
         let adapter = adapters.swap_remove(selected);
-        Self::from_adapter(adapter)
+        let adapter_drm = drm[selected].ok_or("selected Vulkan adapter omitted DRM identity")?;
+        Self::from_adapter(adapter, Some(adapter_drm), Some(render_node))
     }
 
     /// Initialize an explicit offscreen diagnostic outside a Sophia shell.
@@ -126,10 +158,14 @@ impl GpuPreview {
         if adapter.get_info().device_type == wgpu::DeviceType::Cpu {
             return Err("software adapter refused: GPU preview has no CPU fallback".into());
         }
-        Self::from_adapter(adapter)
+        Self::from_adapter(adapter, None, None)
     }
 
-    fn from_adapter(adapter: wgpu::Adapter) -> Result<Self, String> {
+    fn from_adapter(
+        adapter: wgpu::Adapter,
+        adapter_drm: Option<drm::DrmRenderIdentity>,
+        render_node: Option<std::fs::File>,
+    ) -> Result<Self, String> {
         let info = adapter.get_info();
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("Lom explicit offscreen preview"),
@@ -144,11 +180,16 @@ impl GpuPreview {
             device,
             queue,
             pending: None,
+            adapter_drm,
+            _render_node: render_node,
         })
     }
     /// Adapter metadata for diagnostic evidence, not native acceptance.
     pub fn adapter(&self) -> &wgpu::AdapterInfo {
         &self.adapter
+    }
+    fn adapter_drm(&self) -> Option<drm::DrmRenderIdentity> {
+        self.adapter_drm
     }
     /// Render one content-sized scene and return owned wire pixels. This is a
     /// readback building block, not a grant, upload or presentation operation.

@@ -19,6 +19,7 @@ masonry = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849de
 masonry_imaging = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849def6eeab282561439b963862e5", default-features = false, features = ["imaging_vello"] }
 tokio = { version = "1.50", features = ["rt", "sync"] }
 wgpu = { version = "28.0", default-features = false, features = ["vulkan", "wgsl", "std", "parking_lot"] }
+ash = { version = "0.38", default-features = false }
 pollster = "0.4"
 rustix = { version = "1.1", features = ["fs"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }

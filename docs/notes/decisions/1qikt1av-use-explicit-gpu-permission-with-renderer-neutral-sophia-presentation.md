@@ -33,11 +33,13 @@ device/driver interfaces are the target; no custom kernel or particular GPU
 memory controller is required.
 
 The grant and private device inventory remain the authority for adapter
-selection. Lom matches the exact PCI bus identity when wgpu obtains it from the
-optional Vulkan PCI-bus extension. When that extension supplies no bus string,
-Lom matches Sophia's host-observed PCI vendor/device pair inside the domain that
-exposes exactly one render node. It never treats enumeration order as identity;
-missing fallback fields, conflicting bus identities and multiple matches fail.
+selection. Sophia supplies a bounded read-only Linux PCI DRM discovery view for
+the one granted node rather than host `/sys` or a whole physical-device tree.
+Lom holds that node open, inspects `VK_EXT_physical_device_drm` on each non-CPU
+Vulkan adapter, and requires exactly one render major/minor match before asking
+that same adapter for a device. It never treats enumeration order or PCI model
+metadata as authority. Missing extension or render identity, a mismatch, and
+zero or multiple matches fail. PCI fields remain diagnostics only.
 
 Direct permission accepts GPU-driver and availability risk. It is not a hard
 aggregate VRAM quota or a guarantee against desktop-wide device loss. Lom must

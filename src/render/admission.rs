@@ -1,7 +1,10 @@
 //! Startup-scoped GPU grant validation and exact Vulkan adapter selection.
 
+use std::fs::File;
 use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _};
 use std::path::PathBuf;
+
+use super::drm::DrmRenderIdentity;
 
 const GPU_MODE_ENV: &str = "SOPHIA_SHELL_GPU_MODE";
 const GPU_GRANT_EPOCH_ENV: &str = "SOPHIA_SHELL_GPU_GRANT_EPOCH";
@@ -11,13 +14,6 @@ const GPU_DEVICE_MINOR_ENV: &str = "SOPHIA_SHELL_GPU_DEVICE_MINOR";
 const GPU_PCI_BUS_ID_ENV: &str = "SOPHIA_SHELL_GPU_PCI_BUS_ID";
 const GPU_PCI_VENDOR_ID_ENV: &str = "SOPHIA_SHELL_GPU_PCI_VENDOR_ID";
 const GPU_PCI_DEVICE_ID_ENV: &str = "SOPHIA_SHELL_GPU_PCI_DEVICE_ID";
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PciIdentity {
-    bus_id: String,
-    vendor_id: u32,
-    device_id: u32,
-}
 
 /// Exact startup authority for one GPU worker and shell connection epoch.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -30,11 +26,11 @@ pub struct GpuGrant {
     pub device_major: u32,
     /// Kernel character-device minor number observed by Sophia.
     pub device_minor: u32,
-    /// PCI bus identity when the kernel device has one.
+    /// Optional PCI bus diagnostic supplied by Sophia.
     pub pci_bus_id: Option<String>,
-    /// PCI vendor identifier used when Vulkan cannot publish its bus identity.
+    /// Optional PCI vendor diagnostic supplied by Sophia.
     pub pci_vendor_id: Option<u32>,
-    /// PCI device identifier used when Vulkan cannot publish its bus identity.
+    /// Optional PCI device diagnostic supplied by Sophia.
     pub pci_device_id: Option<u32>,
 }
 
@@ -58,13 +54,19 @@ impl GpuGrant {
         let render_node = PathBuf::from(
             lookup(GPU_RENDER_NODE_ENV).ok_or("GPU grant omitted its render-node path")?,
         );
-        if render_node != std::path::Path::new("/dev/dri/renderD128") {
-            return Err("GPU grant render-node path is not the fixed private device".into());
-        }
         let device_major = u32::try_from(number(&lookup, GPU_DEVICE_MAJOR_ENV)?)
             .map_err(|_| "GPU device major exceeds u32")?;
         let device_minor = u32::try_from(number(&lookup, GPU_DEVICE_MINOR_ENV)?)
             .map_err(|_| "GPU device minor exceeds u32")?;
+        let render_name = render_node
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("GPU grant render-node path has no UTF-8 basename")?;
+        if render_node.parent() != Some(std::path::Path::new("/dev/dri"))
+            || render_name != format!("renderD{device_minor}")
+        {
+            return Err("GPU grant render-node path disagrees with its kernel minor".into());
+        }
         let metadata = std::fs::metadata(&render_node)
             .map_err(|error| format!("GPU render-node metadata: {error}"))?;
         if !metadata.file_type().is_char_device()
@@ -73,37 +75,58 @@ impl GpuGrant {
         {
             return Err("GPU grant does not name the exposed character device".into());
         }
-        if visible_dri_entries(std::path::Path::new("/dev/dri"))?.as_slice() != ["renderD128"] {
-            return Err("GPU grant domain exposes more than its fixed private device".into());
+        if visible_dri_entries(std::path::Path::new("/dev/dri"))?.as_slice() != [render_name] {
+            return Err("GPU grant domain exposes more than its selected private device".into());
         }
-        let pci = pci_identity(&lookup)?;
+        let pci = pci_diagnostics(&lookup)?;
         Ok(Self {
             epoch,
             render_node,
             device_major,
             device_minor,
-            pci_bus_id: pci.as_ref().map(|identity| identity.bus_id.clone()),
-            pci_vendor_id: pci.as_ref().map(|identity| identity.vendor_id),
-            pci_device_id: pci.as_ref().map(|identity| identity.device_id),
+            pci_bus_id: pci.bus_id,
+            pci_vendor_id: pci.vendor_id,
+            pci_device_id: pci.device_id,
         })
+    }
+
+    pub(super) fn open_render_node(&self) -> Result<File, String> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&self.render_node)
+            .map_err(|error| format!("open granted GPU render node: {error}"))?;
+        let metadata = file
+            .metadata()
+            .map_err(|error| format!("granted GPU render-node identity: {error}"))?;
+        if !metadata.file_type().is_char_device()
+            || rustix::fs::major(metadata.rdev()) != self.device_major
+            || rustix::fs::minor(metadata.rdev()) != self.device_minor
+        {
+            return Err("opened GPU render node disagrees with Sophia's grant".into());
+        }
+        Ok(file)
     }
 }
 
-fn pci_identity(lookup: &impl Fn(&str) -> Option<String>) -> Result<Option<PciIdentity>, String> {
-    let bus = lookup(GPU_PCI_BUS_ID_ENV)
+#[derive(Debug, Eq, PartialEq)]
+struct PciDiagnostics {
+    bus_id: Option<String>,
+    vendor_id: Option<u32>,
+    device_id: Option<u32>,
+}
+
+fn pci_diagnostics(lookup: &impl Fn(&str) -> Option<String>) -> Result<PciDiagnostics, String> {
+    let bus_id = lookup(GPU_PCI_BUS_ID_ENV)
         .map(|value| normalized_pci_bus_id(&value))
         .transpose()?;
-    let vendor = optional_hex(lookup, GPU_PCI_VENDOR_ID_ENV)?;
-    let device = optional_hex(lookup, GPU_PCI_DEVICE_ID_ENV)?;
-    match (&bus, vendor, device) {
-        (None, None, None) => Ok(None),
-        (Some(bus_id), Some(vendor_id), Some(device_id)) => Ok(Some(PciIdentity {
-            bus_id: bus_id.clone(),
-            vendor_id,
-            device_id,
-        })),
-        _ => Err("GPU grant PCI identity is incomplete".into()),
-    }
+    let vendor_id = optional_hex(lookup, GPU_PCI_VENDOR_ID_ENV)?;
+    let device_id = optional_hex(lookup, GPU_PCI_DEVICE_ID_ENV)?;
+    Ok(PciDiagnostics {
+        bus_id,
+        vendor_id,
+        device_id,
+    })
 }
 
 fn optional_hex(
@@ -162,34 +185,46 @@ pub(super) fn visible_dri_entries(path: &std::path::Path) -> Result<Vec<String>,
 pub(super) fn select_adapter(
     grant: &GpuGrant,
     adapters: &[wgpu::AdapterInfo],
+    drm: &[Option<DrmRenderIdentity>],
 ) -> Result<usize, String> {
+    if adapters.len() != drm.len() {
+        return Err("Vulkan adapter identity inventory is inconsistent".into());
+    }
     let vulkan_non_cpu = adapters
         .iter()
         .filter(|info| {
             info.backend == wgpu::Backend::Vulkan && info.device_type != wgpu::DeviceType::Cpu
         })
         .count();
-    let reported_pci = adapters
+    let drm_extension = adapters
         .iter()
-        .filter(|info| {
+        .zip(drm)
+        .filter(|(info, identity)| {
             info.backend == wgpu::Backend::Vulkan
                 && info.device_type != wgpu::DeviceType::Cpu
-                && !info.device_pci_bus_id.is_empty()
+                && identity.is_some()
+        })
+        .count();
+    let has_render = adapters
+        .iter()
+        .zip(drm)
+        .filter(|(info, identity)| {
+            info.backend == wgpu::Backend::Vulkan
+                && info.device_type != wgpu::DeviceType::Cpu
+                && identity.is_some_and(|identity| identity.has_render)
         })
         .count();
     let matching = adapters
         .iter()
+        .zip(drm)
         .enumerate()
-        .filter(|(_, info)| {
+        .filter(|(_, (info, identity))| {
             info.backend == wgpu::Backend::Vulkan
                 && info.device_type != wgpu::DeviceType::Cpu
-                && grant.pci_bus_id.as_ref().is_none_or(|identity| {
-                    if info.device_pci_bus_id.is_empty() {
-                        Some(info.vendor) == grant.pci_vendor_id
-                            && Some(info.device) == grant.pci_device_id
-                    } else {
-                        &info.device_pci_bus_id == identity
-                    }
+                && identity.is_some_and(|identity| {
+                    identity.has_render
+                        && identity.major == grant.device_major
+                        && identity.minor == grant.device_minor
                 })
         })
         .map(|(index, _)| index)
@@ -197,7 +232,7 @@ pub(super) fn select_adapter(
     match matching.as_slice() {
         [index] => Ok(*index),
         [] => Err(format!(
-            "no Vulkan adapter matches Sophia's GPU grant (enumerated={} vulkan_non_cpu={vulkan_non_cpu} pci_reported={reported_pci})",
+            "no Vulkan adapter matches Sophia's GPU grant (enumerated={} vulkan_non_cpu={vulkan_non_cpu} drm_extension={drm_extension} has_render={has_render} dev_t_match=0)",
             adapters.len()
         )),
         _ => Err("Sophia's GPU grant resolves to multiple Vulkan adapters".into()),

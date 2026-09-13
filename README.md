@@ -80,7 +80,9 @@ content behind the earlier GPU-admission placeholder. The accepted
 [replacement decision](docs/notes/decisions/1qikt1av-use-explicit-gpu-permission-with-renderer-neutral-sophia-presentation.md)
 uses explicit direct GPU permission on stock Linux, with no custom kernel or
 hard aggregate VRAM guarantee. Its launch integration is not implemented yet;
-this documentation does not enable the grant or an ambient display fallback. Running `lom`
+the launch integration and exact DRM adapter check are implemented, while
+hardware and native acceptance remain open. This documentation does not enable
+the grant or an ambient display fallback. Running `lom`
 without a command exits with status 2. Nothing here installs or changes the
 current desktop.
 

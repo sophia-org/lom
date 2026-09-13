@@ -269,8 +269,10 @@ to be silently reused.
 
 Sophia's initial content ADR specifies immutable CPU pixel bytes. The accepted
 execution design grants direct GPU access independently of that contract,
-default denied. It exposes only the selected render node and admitted driver
-assets, not an application display or host-service endpoint. Direct access
+default denied. It exposes only the selected render node under its real kernel
+basename and a bounded read-only sysfs discovery projection for that node, not
+host `/sys`, an application display or a host-service endpoint. Lom authorizes
+the Vulkan adapter by its exact DRM render `dev_t`. Direct access
 accepts driver and GPU-resource availability risk; it does not promise a hard
 aggregate VRAM quota or immunity from desktop-wide device loss. No custom
 kernel or particular GPU accounting controller is a prerequisite.

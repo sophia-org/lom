@@ -88,7 +88,8 @@ hardware part; no ordinary Sophia desktop startup is needed for it.
 
 Implementation checkpoint: Lom validates the connection-scoped grant, private
 render-node character-device identity, and an exact unique non-CPU Vulkan
-adapter, including PCI identity when Sophia publishes one. Production rendering
+adapter through `VK_EXT_physical_device_drm` render major/minor identity. PCI
+facts are diagnostics and cannot authorize or rescue an adapter. Production rendering
 runs on a capacity-one worker with a 2000 ms recovery deadline while the service
 continues protocol observation. Deterministic tests cover denied and stale
 grants, ambiguous and CPU adapters, one-job ownership, quarantine after expiry,
@@ -111,6 +112,16 @@ The successor candidate validates Sophia's PCI vendor/device fallback within
 the single-render-node domain and reports bounded adapter counts on failure.
 This is a portable selection repair with deterministic coverage, not proof that
 it caused the observed refusal; t003 still requires a retained hardware result.
+
+The next protected result on Sophia `bb97c561` and Lom `6e274bd` reported one
+enumerated adapter and zero non-CPU Vulkan adapters. Sophia had mounted the
+render node but no `/sys`; inspected RADV/libdrm discovery requires the render
+minor's DRM and PCI sysfs identity and therefore discarded the physical device
+before Lom's selector ran. The repair consumes Sophia's immutable one-device
+sysfs projection, preserves the actual render-minor basename and selects only an
+exact DRM `dev_t` match. No CPU or PCI fallback remains. This explains the
+observed enumeration failure but does not establish later RADV initialization,
+rendering or native presentation; those remain hardware gates.
 
 ### t004
 
