@@ -23,8 +23,12 @@ this native-shell path.
 This document governs Lom's implementation choices. Sophia's admission,
 graphics, content, and input contracts govern what the client may do. A Lom
 configuration or library API cannot expand that authority. In particular,
-Sophia's proposed CPU-byte content contract does not already provide the GPU
-handoff Lom needs. The implementation gates below must be closed explicitly.
+Sophia's implemented CPU-byte content lifecycle does not itself grant a GPU.
+The accepted [presentation/execution decision](docs/notes/decisions/1qikt1av-use-explicit-gpu-permission-with-renderer-neutral-sophia-presentation.md)
+selects explicit direct GPU permission on stock Linux, with no custom kernel,
+mandatory GPU bridge or Vello dependency in Sophia. The production grant remains
+closed until the [paired critical path](docs/notes/plans/pf4er77j-lom-daily-driver-critical-path.md)
+meets its launch and resource-accounting gates.
 
 ## 1. Ownership boundaries
 
@@ -41,7 +45,9 @@ handoff Lom needs. The implementation gates below must be closed explicitly.
 Lom is one admitted shell client. Descriptor features, content, and indicator
 feeds share that client's negotiated connection where supported. Modules are
 not additional shell clients. Narthex remains an independent reference client;
-this design does not require it to occupy a second shell slot beside Lom.
+it is a rollback option in a separate session, not a second shell beside Lom.
+Lom must preserve required launcher/switcher behavior through its own admitted
+descriptor capabilities before daily-driver promotion.
 
 ```mermaid
 flowchart TD
@@ -236,12 +242,18 @@ Use Vello GPU through `wgpu`, with Parley/Fontique for text. Fonts and assets
 must be explicitly available within the admitted environment. Toolkit defaults
 do not grant host filesystem, service, GPU-device, or display access.
 
-The renderer owns its device, queues, scenes, textures, caches, and local
-completion tracking. The driver owns protocol resource and candidate records.
+The renderer owns its explicitly admitted device, queues, scenes, textures,
+caches, and local completion tracking. Device selection verifies the actual
+adapter against Session's granted kernel identity; it never derives permission
+from inherited display variables or an arbitrary first enumerated adapter. The driver owns protocol resource and candidate records.
 They exchange handles and observations instead of sharing mutable ownership.
 Shell invalidation requests work; it does not establish an independent,
 unbounded presentation clock. Use negotiated pacing and a bounded renderer
-schedule.
+schedule. The target runtime has one GPU worker separate from protocol/control
+progress; it exchanges owned messages with the TEA runtime. Dirty work is
+coalesced per output and unchanged resources are reused. The present service
+still calls a synchronous renderer; separating it is implementation work, not
+behavior established by this document.
 
 | Fact | What it proves |
 | --- | --- |
@@ -253,24 +265,34 @@ schedule.
 | Candidate rejected or superseded | No new presentation authority follows; separate references may still exist |
 | Resource released | The protocol's consumers no longer reference it; local owners must also finish before reuse |
 
-Sophia's initial content ADR specifies CPU pixel bytes. Lom's GPU preference
-requires a separately admitted design for device access and content handoff.
-The design must specify supported formats, synchronization, import validation,
-immutable accepted content, budgets including overlapping copies, and release
-across disconnect or device loss. Importing a buffer or observing an acquire
-fence alone does not prevent a producer from modifying accepted content.
+Sophia's initial content ADR specifies immutable CPU pixel bytes. The accepted
+execution design grants direct GPU access independently of that contract,
+default denied. It exposes only the selected render node and admitted driver
+assets, not an application display or host-service endpoint. Direct access
+accepts driver and GPU-resource availability risk; it does not promise a hard
+aggregate VRAM quota or immunity from desktop-wide device loss. No custom
+kernel or particular GPU accounting controller is a prerequisite.
+
+Any later image transport must specify formats, synchronization, import
+validation, immutable acceptance, peak copy overlap, recipient ownership and
+release across disconnect or device loss. An acquire fence alone does not
+prevent later producer writes; a DMA-BUF alone does not establish zero-copy.
 
 Do not assign new wire kinds, capabilities, or file-descriptor semantics here.
-The operator selected GPU rendering followed by bounded readback and CPU-byte
-transfer for the first native prototype. Account for readback, copies and Engine
-upload explicitly; measure before considering direct GPU-buffer handoff. This
-does not grant a render device or establish an aggregate GPU memory budget.
-CPU rendering is not a silent production fallback.
+The operator retained GPU rendering followed by bounded readback and CPU-byte
+transfer for the first native path. Measure readback, copies, Engine upload and
+actual native retirement before promoting direct GPU-buffer handoff. A future
+GPU bridge is optional execution work, not a shell protocol requirement or
+Vello server inside Sophia. CPU rendering is not a silent production fallback.
 
 Deadlines initiate recovery; they never authorize reuse of storage still held
 by GPU or Engine consumers. Budget reservations and terminal-response capacity
-must precede accepting obligations. Numeric GPU limits and their enforcement
-owners belong in the GPU design gate, not unverifiable claims in this document.
+must precede accepting obligations. Bound known allocations and retain the
+one-job/2000 ms readback recovery limits; do not present them as driver-memory
+or hard GPU-time enforcement. A deadline cannot guarantee a kernel operation
+returns. Sophia owns its finite content and compositor-backing charges through
+retirement. Measure latency distributions, retained bytes and idle wakeups on a
+defined workload before claiming daily-driver performance.
 
 ## 7. Modules, styling, and permissions
 
@@ -327,7 +349,7 @@ No row below is satisfied by this architecture document alone.
 | Topology and authority | Scale change, output removal, disconnect, and immediate revocation invalidate dependent work without granting unpresented input or replaying actions |
 | Resource and queue bounds | Saturation, delayed rendering, stalled consumers, and device loss produce bounded outcomes without losing accepted obligations or reusing referenced storage |
 | Offscreen GPU | Render the first workflow without an X11 or Wayland application connection in an explicitly authorized GPU test environment; retain source, binary, device, timing, memory, and image evidence |
-| Sophia GPU handoff | Separately admit the access/transport design, model and check its lifecycle under Sophia's evidence policy, then implement and validate it |
+| Sophia GPU execution and handoff | Implement the accepted explicit grant on stock Linux, check its lifecycle and refusal paths, verify the admitted adapter, and retain the existing CPU-byte presentation contract; no hard VRAM quota claim |
 | Native acceptance | Use the available Sophia content implementation to demonstrate real presentation and input, distinct from local GPU completion or simulated widget events |
 
 Use reducer fixtures, Masonry's test facilities, and renderer image checks at
@@ -349,6 +371,7 @@ Sophia authority and lifecycle contracts:
 - [Content shells](https://github.com/sophia-org/sophia-stack/blob/master/docs/content-shell.md)
 - [Target-resolved input](https://github.com/sophia-org/sophia-stack/blob/master/docs/target-resolved-input.md)
 - [Compositor graphics](https://github.com/sophia-org/sophia-stack/blob/master/docs/compositor-graphics.md)
+- [Accepted presentation/execution decision](https://github.com/sophia-org/sophia-stack/blob/master/docs/notes/decisions/mn4mzcnf-separate-shell-presentation-from-gpu-execution-permission.md)
 - [Initial CPU content ADR](https://github.com/sophia-org/sophia-stack/blob/master/docs/notes/decisions/6ndjwffd-content-capability-design-for-sophia_shell_v1.md)
 
 Library boundaries inspected for this design on 2026-09-12 (these links track

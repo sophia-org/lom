@@ -76,8 +76,11 @@ terminal. It requires `SOPHIA_SHELL_SOCKET`, `SOPHIA_SHELL_CONFIG` and
 `SOPHIA_SHELL_BAR_THICKNESS`, negotiates revision 6, allocates one panel per
 published output, renders with Vello, and waits for actual `Presented` outcomes
 before retiring replaced resources. The current Sophia profile denies production
-content because this kernel exposes no enforceable cgroup GPU-memory controller;
-Lom does not weaken that gate or fall back to an ambient display. Running `lom`
+content behind the earlier GPU-admission placeholder. The accepted
+[replacement decision](docs/notes/decisions/1qikt1av-use-explicit-gpu-permission-with-renderer-neutral-sophia-presentation.md)
+uses explicit direct GPU permission on stock Linux, with no custom kernel or
+hard aggregate VRAM guarantee. Its launch integration is not implemented yet;
+this documentation does not enable the grant or an ambient display fallback. Running `lom`
 without a command exits with status 2. Nothing here installs or changes the
 current desktop.
 
@@ -99,7 +102,9 @@ ordering, completion, and evidence.
 - The runtime serializes observations and owns effects. Widgets emit semantic messages.
 - Sophia owns placement, admission, composition, target selection and revocation.
 - Modules acquire no ambient host-service or execution rights from configuration.
-- GPU access, immutable content handoff and native input need separate admitted contracts.
+- GPU permission is independent of immutable presentation and exact native input.
+- No custom kernel or mandatory GPU bridge is on the critical path; Vello remains a Lom dependency.
+- The [paired implementation plan](docs/notes/plans/pf4er77j-lom-daily-driver-critical-path.md) names Lom and Sophia owners, dependencies and acceptance exits.
 
 Linux builds need a C toolchain, `pkg-config`, and Fontconfig development files
 (`libfontconfig1-dev` on Debian/Ubuntu; `fontconfig-devel` on Void), required by

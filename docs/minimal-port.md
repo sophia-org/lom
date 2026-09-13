@@ -66,7 +66,8 @@ The renderer now uses Vello's texture path with a caller-owned readback. A
 two-second prototype deadline covers GPU polling and callback delivery. Failure
 retains the submitted job and prevents a second job; it never treats timeout as
 GPU completion. Callback tests are GPU-free and do not prove driver behavior.
-Vello's internal GPU allocation budget is still unresolved. A protected
+These limits do not enforce an aggregate budget for Vello/driver GPU memory.
+The accepted direct-access mode explicitly does not promise such a quota. A protected
 display-independent conformance client now negotiates content, uploads those
 canonical bytes and submits one complete panel candidate under an Engine-issued
 permit. Its host verifies the resource and candidate tables, then deliberately
@@ -76,7 +77,8 @@ presentation or input path follows from that proof.
 Local preview limits are 8192×4096, at most 8M pixels per image and scale 0.5–4;
 there is one synchronous render/readback at a time. The widget-message queue is
 bounded to 64 and surfaces saturation explicitly. These do not establish the
-separate negotiated GPU memory/fence/retirement budgets required for a shell.
+separate execution permission, content budgets and final-retirement contract
+required for a shell. They do not enforce all driver allocations.
 
 ## Persistent content service
 
@@ -104,21 +106,32 @@ resource transfer, permit pacing, `Prepared` then `Presented`, distinct resource
 identity, and retirement/release only after the successor presents. It does not
 prove X socket routing, a GPU driver, Engine scanout or operator-visible pixels.
 
-Sophia's production content grant is still fail-closed. The current kernel has
-no enforceable cgroup GPU-memory controller, so binding a render node or relying
-on one-job concurrency is not accepted as aggregate GPU residency enforcement.
-No native Lom session has been attempted through this path.
+Sophia's production content grant is still fail-closed at the old admission
+placeholder. The [successor decision](notes/decisions/1qikt1av-use-explicit-gpu-permission-with-renderer-neutral-sophia-presentation.md)
+no longer requires a custom kernel or cgroup GPU-memory controller: direct GPU
+permission is explicit and carries no hard aggregate VRAM guarantee. A device
+bind or one job still does not enforce the old quota. Launch-policy migration,
+device identity and compositor backing accounting must land before admission.
+No native Lom session has been attempted through this path. The new policy does
+not change the meaning of historical prototype results above.
 
 ## Remaining acceptance
 
-- Establish enforceable aggregate GPU-memory admission for Lom's confined domain;
-  keep production content denied until it exists.
+The [paired critical path](notes/plans/pf4er77j-lom-daily-driver-critical-path.md)
+separates the minimum desktop from parallel provider work and measurement-led
+transport/GPU-bridge candidates. These tasks remain open:
+
+- Implement and verify explicit direct GPU launch admission and matching Lom
+  device selection; keep production denied until the actual resources and
+  compositor-owned backing charges are established.
 - Extend the observed GPU diagnostic with source/binary/device identity, timing
   and memory evidence, and test the changed bounded-readback path explicitly.
 - Implement authorized live sources and scheduling. Focused title, battery,
   system information and tray are text fixtures, not functioning integrations.
-- Replace restart-on-topology-change with a tested fresh-allocation/reconnect
-  policy if supervisor restart proves insufficient.
+- Keep protocol/control progress independent of GPU work; add per-output dirty
+  scheduling and tested fresh-allocation/reconnect recovery for topology changes.
+- Preserve descriptor launcher/switcher workflows within the same admitted
+  connection; Narthex is a separate-session fallback, not a second shell slot.
 - Implement and verify exact *presented-candidate* action bindings. Current
   semantic messages validate module and observation identity conservatively;
   they do not implement a candidate-retention ledger, event deduplication,

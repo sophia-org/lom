@@ -22,8 +22,12 @@ decisions. The task files own status and order; notes must not copy the queue.
   or `+deferred`.
 - Context is `@development`, `@physical`, or `@planning`.
 - `id:tNNN` is stable and unique across open and completed task files.
-- `order:NNN` is the reviewed execution order. Use the lowest critical order
+- `order:NNN` is the reviewed execution order (decimal insertion keys are allowed).
+  Use the lowest critical order
   unless the operator selects another scope.
+- `depends:tNNN,tMMM` names prerequisites in this repository.
+- `peer:sophia/tNNN,tMMM` links paired Sophia work; IDs are repository-local.
+  Shared evidence can prove both exits, but peer completion never closes a local task.
 - The Markdown link names the note or evidence that owns the task details.
 
 Priority, lane, context, identity, and order use fields permitted by todo.txt.

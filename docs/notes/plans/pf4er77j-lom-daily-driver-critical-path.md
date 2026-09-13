@@ -10,153 +10,242 @@ tags: [plan, daily-driver, shell]
 ## Scope and exit
 
 The first daily-driver milestone is one protected Lom shell process presenting
-the ironbar-inspired Minimal panel on every admitted output. It shows workspace
-state and active output, clock, and an anchored calendar popout. Workspace pills
-activate the exact presented action. The panel survives output and session
-lifecycle changes, coexists with Narthex, stays within advertised resource
-budgets, and has a documented fallback.
+the ironbar-inspired Minimal panel on every admitted output: workspace state,
+active output, clock and an anchored calendar popout. Workspace pills invoke
+the exact presented action. Preserve launcher/switcher access on the same
+admitted connection and retain Narthex as a separate-session rollback client.
+The earlier wording promising simultaneous Narthex coexistence was incorrect:
+Sophia has one native shell slot.
 
-This milestone preserves Sophia's architecture: no ambient X11 or Wayland
-display, no Waybridge, no GTK dependency, no general pointer stream, and no
-implicit render-node grant. Sophia owns placement, presented-target selection,
-input authority, composition, and revocation. Lom owns its TEA model, Xilem and
-Masonry views, Vello rendering, and the client side of admitted shell protocols.
+The [accepted GPU decision](../decisions/1qikt1av-use-explicit-gpu-permission-with-renderer-neutral-sophia-presentation.md)
+keeps GPU rendering under explicit startup permission, without requiring a
+custom kernel, hard GPU quota, Waybridge, GTK, private display or Vello inside
+Sophia. Direct GPU access accepts driver/resource-availability risk. It grants
+no foreign pixels or general pointer stream. Engine owns placement,
+composition, target selection and revocation; Lom owns its TEA model,
+Xilem/Masonry views and Vello renderer. KDL preserves supported ironbar concepts
+without promising drop-in CSS or complete feature compatibility.
 
-Daily-driver status requires deterministic checks plus attended native evidence
-from the exact installed release. Software snapshots, offscreen GPU output,
-real-socket protocol fixtures, `Prepared`, and a locally completed render do not
-substitute for native `Presented` retirement and operator-visible behavior.
+Daily-driver status requires deterministic checks and attended native evidence
+from the exact installed release. Software snapshots, offscreen renders,
+private-socket fixtures and Prepared are not native retirement or visible UI.
+Retain historical evidence with its original identities; none validates the new
+launch policy automatically. This plan does not authorize install or live tests.
 
-The minimum milestone deliberately excludes focused title, battery and system
-information, tray integration, broad ironbar compatibility, direct GPU-buffer
-handoff, and content deltas. Those are parallel or candidate work and cannot
-delay the first honest panel.
+Focused title, battery/system, tray, hot reload and wider ironbar parity remain
+parallel work. New image transport, content deltas and a GPU bridge remain
+candidates. The first useful panel must not wait for those architectures.
 
-## Ordering and dependencies
+## Ordering and paired ownership
 
-GPU-domain admission and discrete input can be implemented independently, but
-both must land before native acceptance. Popout work depends on discrete action
-delivery. Lifecycle resilience follows the functioning panel path. Packaging
-must retain a known fallback before the attended matrix. Soak and promotion use
-one exact installed candidate and cannot be inferred from earlier artifacts.
+Sophia owns the [server critical path](https://github.com/sophia-org/sophia-stack/blob/master/docs/notes/plans/1m3z9q0j-lom-and-sophia-portable-gpu-shell-critical-path.md).
+Task IDs are repository-local: `depends:` names local tasks and
+`peer:sophia/tNNN` names paired work. A peer's completion does not close this
+repository's task. Both sides may cite one exact integration evidence record
+when it proves their distinct exits.
+
+| Step | Lom task | Sophia task | Shared exit |
+| --- | --- | --- | --- |
+| 1 | t003: admitted device and asynchronous renderer | t097: direct launch grant and backing charges | A protected stock-Linux GPU render can prove or refuse the exact permission |
+| 2 | t004: candidate-bound actions and acknowledgement | t098: presented target dispatch | One exact presented workspace action; stale and unpresented cases refused |
+| 3 | t005: calendar popout | t099: placement, composition and dismissal | Coherent panel/popout lifecycle and consumed outside dismissal |
+| 4 | t006: per-output and reconnect recovery | t100: topology, epoch and retirement owners | Fresh state and drained obligations through loss/replacement |
+| 5 | t020: descriptor workflows; t007: package | t101: shared workflow support and verifier | One shell retains desktop controls and an exact rollback |
+| 6 | t008: attended matrix; t009: soak; t010: promotion | t081: native-shell acceptance | Both ledgers and product claims match the exact installed evidence |
+
+Steps 1 and 2 can be developed independently under contained tests. Popouts
+need input. Recovery tests and descriptor integration can begin early but must
+validate the combined path before packaging. Package identity includes both
+accepted repository tips; keep Lom's Sophia dependency pin explicit. Coordinate
+owners before shared library/transport edits and integrate clean, checked tips.
+Do not import unfinished input work merely to obtain a documentation change.
 
 ## Task details
 
 ### t003
 
-Add enforceable aggregate GPU-memory admission for the confined Lom protection
-domain. The operator policy defaults denied; effective-profile evidence names
-the granted device and budgets. Admission accounts for staging, resident,
-renderer overlap, and retiring storage without treating a render-node bind,
-one-job scheduling, or per-resource limits as aggregate enforcement. GPU waits
-remain bounded. Deterministic tests prove denial, exhaustion, release, epoch
-replacement, and disconnect while renderer references remain. The content grant
-stays unavailable on kernels where the selected mechanism cannot enforce it.
+Consume the new explicit launch permission from Sophia t097; verify the actual
+Vulkan/wgpu adapter against the admitted kernel device identity. Refuse missing,
+ambiguous, unsupported, old-epoch or mismatched devices. Do not discover an
+ambient display or select software rendering when permission is denied.
+Sophia implements policy/device exposure; Lom does not provision cgroups or
+claim aggregate driver-memory accounting.
 
-Exit: Sophia can admit a protected Lom domain under explicit policy with a
-closed resource ledger, or this task records a separately accepted replacement
-design. No native presentation claim is required here.
+Separate the synchronous GPU renderer from the protocol owner with bounded
+messages and one outstanding job. Actions, revocations, permit expiry and
+disconnect remain serviceable while render/readback is delayed. Keep the
+existing 2000 ms readback recovery deadline, exact resource dimensions and
+known CPU/readback allocation checks. Timeout retains unsafe-to-reuse work and
+prevents new jobs; a worker/watchdog is not proof of cancellation of a kernel
+operation. Retain the no-silent-CPU-fallback behavior.
+
+Exit: deterministic adapter/queue/recovery tests pass, including delayed GPU
+completion with ongoing control progress. A separately authorized isolated GPU
+run proves the actual selected device inside the launch domain on a stock
+kernel, records its capabilities/driver and image result, and verifies the
+changed readback path. Mocked selection and the old preview cannot close that
+hardware part; no ordinary Sophia desktop startup is needed for it.
 
 ### t004
 
-Implement the first `content_discrete_input` workflow for a workspace pill.
-The complete content candidate binds each target to exact presented semantic
-meaning. Sophia dispatches from the applicable presented snapshot after clipping
-and precedence; Lom never receives a general pointer stream. Unknown, stale,
-duplicate, revoked, disconnected, and old-epoch actions settle visibly and
-cannot activate replacement meaning.
+Export a target table with each complete view candidate. Retain the exact
+mapping from candidate/interaction/target identity to TEA meaning and the
+authorized indicator action token. Resolve an activation against the presented
+binding, not the latest widget position or module index. Do not widen metadata,
+application actions or pointer disclosure to make toolkit input convenient.
 
-Exit: protocol and reducer tests establish one successful activation plus every
-refusal and teardown boundary, with bounded queues and explicit acknowledgements.
+Use Sophia t098's action/acknowledgement path with bounded deduplication and
+terminal outcomes. Unknown, stale, duplicate, revoked, wrong-output and
+old-epoch events cannot activate replacement meaning. Prepared does not make a
+target active. Cancellation and timeout must settle without keeping a widget
+pressed forever, and driver work must not block the response.
+
+Exit: reducer, model/trace mappings where required, and real private-socket
+tests prove one valid activation plus all refusal and teardown cases. Keep
+backend-queued, socket-routed and client-observed outcomes distinct. Native
+physical targeting remains t008.
 
 ### t005
 
-Implement the calendar popout as a separate allocation and complete content
-candidate. Anchor it with acknowledged parent-allocation physical geometry and
-the exact parent presentation epoch. Engine placement and coverage rules apply;
-the client does not reconstruct fractional coordinates. Outside dismissal is
-consumed by Engine without click-through or coordinate disclosure. Parent loss,
-output loss, supersession, and revocation withdraw dependent work safely.
+Implement the calendar as a separate allocation and part of a complete coherent
+panel/popout candidate using Sophia t099. Bind a parent-allocation-local
+physical anchor to the acknowledged allocation and parent presentation epoch;
+never reconstruct a logical anchor from rounded widget coordinates. Honor the
+Engine's returned physical extents, scale, coverage and no-reservation rules.
 
-Exit: deterministic lifecycle tests cover open, replacement, dismissal,
-rejection, parent loss, resource retirement, and exact action identity.
+Route calendar actions through exact candidate bindings. Engine consumes
+outside dismissal without exposing the outside location or replaying a click
+into an application. Parent loss, output loss, replacement and revocation
+withdraw dependent intent and settle resources without confusing cancellation
+with final GPU or Engine release.
+
+Exit: deterministic tests cover open, navigation/action, replacement,
+dismissal/timeout, placement rejection, parent/epoch loss and retirement,
+including fractional scaling. No local popup intent is recorded as visibility.
 
 ### t006
 
-Replace the current restart-only topology response with bounded, tested recovery
-for output addition/removal, scale or allocation-generation change, shell
-reconnect, fresh grant epochs, configuration replacement, and normal supervisor
-restart. Accepted obligations receive terminal outcomes; old resources and
-actions remain invalid until their independent lifetimes settle. Recovery cannot
-silently reuse identities or grow retained queues.
+Maintain per-output state, dirty work and generations through output addition,
+removal, scale/allocation changes and content-grant replacement. Replace the
+current exit-on-facts-change path with explicit bounded recovery; if the
+transport/domain must restart, invalidate old work and reconstruct complete
+state at the fresh epoch. Pair with Sophia t100.
 
-Exit: real-socket and reducer tests exercise each transition and demonstrate
-fresh allocations and presentations without stale actions or resource reuse.
+Use Engine permits to schedule dirty outputs fairly and reuse unchanged
+resources; a blocked render/output must not starve control traffic. Keep one
+protocol owner and bounded queues. Supervisor/configuration replacement must
+discard stale effects and bindings. This is restart recovery, not the optional
+atomic hot-reload feature in t014.
+
+Exit: reducer/private-socket tests exercise topology, every disconnect phase,
+revocation, retained old storage and restart. Show fresh allocations and
+presentations, exact terminal outcomes, no stale activation/reuse, and bounded
+metadata/backlog. Add measurable idle wakeup and dirty-output scheduling checks.
+
+### t020
+
+Preserve the descriptor switcher/launcher and any other capabilities the client
+negotiates within Lom's single native connection. Use existing sanitized
+descriptors, complete candidates, Engine rendering/input and issuer-scoped
+actions; this task does not authorize a custom raster application launcher.
+Coordinate bounded demultiplexing APIs with Sophia t101 rather than leaving
+unconsumed descriptor records to fill a queue. Keep their controller state out
+of the GPU renderer.
+
+Exit: real protocol fixtures show launcher/switcher operation while panels
+update, including unknown/old records, acknowledgements, reconnect and content
+failure. Required ordinary desktop controls remain accessible with one shell
+slot. Narthex is an independently verified fallback, not a simultaneous client.
 
 ### t007
 
-Produce an exact Lom artifact and a Sophia desktop-profile selection that starts
-it as the protected content shell while retaining Narthex for its admitted
-launcher and switcher role. Record source, dependency lock, binary hash, profile,
-Sophia/Hagia/Narthex identities, output topology, and rollback command. Refuse a
-profile whose host cannot enforce the grant established by t003.
+Package the paired, accepted Sophia/Lom commits after t003 through t006 and
+t020. Supply protected panel/theme KDL and a desktop-profile selection with the
+new explicit GPU permission, content/input grant and panel allowance. Record
+dependency lock, hashes, policy-client identity, driver/device prerequisites
+and the effective profile. Keep the known Narthex artifact/profile for rollback
+under the existing supervisor; no second shell slot is assumed.
 
-Exit: an offline install verifier accepts the exact package and rejects identity,
-policy, and configuration mutations. Installation remains a separate authorized
-operator action.
+Exit: offline package verification with Sophia t101 accepts the exact inputs and
+refuses old quota syntax, missing resources, changed identities and inadequate
+permissions. Document the operator-authorized install, foreground acceptance,
+stop and rollback procedure. Packaging does not install or accept the candidate.
 
 ### t008
 
-Run an attended native matrix on the exact installed candidate and both outputs.
-Verify panel pixels, top reservation, scale and placement, active-output styling
-including an empty output, workspace activation, clock update, calendar open and
-dismiss, correct target routing, no click-through, Narthex coexistence, clean
-stop/relaunch, and recovery after an output or session transition. Require actual
-native presentation and retirement evidence for the candidate under observation.
+Run the attended matrix on the exact installed package and every admitted
+output (both outputs on the current acceptance machine). Verify actual pixels,
+reservation, scale/placement, an empty focused output, workspace activation,
+clock update, calendar open/action/dismissal, no click-through, descriptor
+launcher/switcher, stop/relaunch and topology/reconnect recovery. Observe
+rollback to Narthex in a separate session. Pair results with Sophia t081.
 
-Exit: retained evidence ties every result to the installed binary and profile;
-failures remain open rather than being converted into fixture success.
+Exit: retained evidence binds each action to the correct candidate's actual
+native retirement, source/binary/profile/grant/device identities and observed
+behavior. A fixture-reported Presented is insufficient. Failed or unexecuted
+cases remain open and cannot be replaced by older evidence.
 
 ### t009
 
-Use the accepted candidate for a daily workload. Exercise idle, VT suspend and
-resume, normal logout/login, repeated popouts and workspace actions, config and
-shell restart, and both outputs. Measure warmed memory, retained resource counts,
-frame and action latency, and recovery. There must be no steady allocation
-growth, unresolved accepted obligations, shell/session loss, or unbounded wait.
+Define a daily workload and its refresh-relative latency/resource acceptance
+budgets before testing. Exercise idle, repeated workspace/popout/descriptor
+actions, output transitions, VT suspend/resume, config/shell restart and normal
+logout/login. Retain duration and exact identities. Measure render/readback,
+IPC copies/bytes, Engine upload/composition and native retirement separately;
+report action/frame p50/p95/p99, idle wakeups, queue depth, warmed storage and
+retirement counts. Averages or local render time alone cannot prove responsiveness.
 
-Exit: a retained soak record states duration, workload, exact identities,
-measurements, incidents, and any rerun triggered by fixes.
+Exit: the declared workload meets its budgets, old generations drain, there is
+no sustained storage growth or lost accepted obligation, and failures/recovery
+have evidence. Device incidents remain visible; direct GPU mode promises no
+hard driver VRAM isolation. Fixes require a new exact-candidate acceptance record.
 
 ### t010
 
-Promote Lom to daily-driver status only after t003 through t009 meet their exits.
-Update README and architecture statements to the observed behavior, record the
-accepted configuration and rollback, and create a `zk milestone` linked from the
-milestone index. Preserve remaining parallel and candidate work without implying
-feature parity with ironbar.
+Promote only after t003 through t009 and t020 meet their exits and Sophia t081
+agrees on the shared native evidence. Update README/architecture product claims,
+record accepted configuration and rollback, and create a zk milestone linked
+from the milestone index. Preserve parallel/candidate work without implying
+feature parity with ironbar or universal driver compatibility.
 
-Exit: product claims, task ledger, milestone record, installed identity, and
-retained acceptance evidence agree.
+Exit: installed identity, product claims, milestone and both task ledgers agree.
 
 ### t011 through t015
 
-These parallel tasks add authorized focused-title, battery/system, tray, atomic
-KDL reload, and wider Minimal appearance/configuration parity. Each provider needs
-its own authority and bounded lifecycle where applicable. They may proceed when
-they do not change the daily-driver critical-path contract or delay its evidence.
+Authorized focused-title, battery/system, tray, atomic KDL reload and wider
+Minimal appearance/configuration parity remain parallel scopes. Each provider
+needs its own authority and bounded lifecycle. They must not expand the
+critical-path contract or turn fixture values into purported live data.
 
 ### t016 through t018
 
-Direct GPU-buffer handoff and tile/delta content remain measurement-triggered
-candidates. Broad ironbar module and configuration compatibility is deferred.
-Promoting any of them requires a named problem, accepted design, budgets, and a
-measurable exit; perceived elegance or nominal bandwidth is not enough.
+Pair t016 with Sophia t102: measure the CPU-byte path before admitting shared
+memory or DMA-BUF. A new transport must prove immutable acceptance, finite
+overlap accounting, synchronization, cross-device behavior and final release.
+No zero-copy claim follows from an imported handle.
+
+t017 first measures reuse of the existing immutable resource/placement tables
+for static panels and small clock updates. Tiles already exist in the content
+contract; Lom's current full-panel submission does not exploit them. A new delta
+contract, if needed, must name its base and pass a separate design gate.
+t018 broad ironbar parity remains deferred to a user-prioritized compatibility
+list after daily-driver acceptance.
+
+### t019
+
+Pair with Sophia t103. A GPU bridge is a candidate only when a named isolation
+or measured performance need justifies mediation. Evaluate trusted renderer
+adapters, bounded job identity/queues, enforceable allocation ownership,
+failure/restart behavior and a second independent implementation. A helper
+executing opaque jobs is not a hard GPU quota. No new kernel, Vello requirement
+in Sophia, private display or mandatory shell API is implied by this task.
 
 ## Connections
 
-[Architecture](../../../ARCHITECTURE.md) defines Lom's ownership and rendering
-model. [Minimal port evidence](../../minimal-port.md) records the current local
-UI, GPU-readback prototype, and persistent content lifecycle. [Configuration](../../configuration.md)
-defines the supported KDL surface. Sophia's content-shell ADR and GPU-domain ADR
-remain the cross-repository authority for server-side admission and wire behavior.
+[Architecture](../../../ARCHITECTURE.md), the
+[adoption ADR](../decisions/1qikt1av-use-explicit-gpu-permission-with-renderer-neutral-sophia-presentation.md)
+and [configuration](../../configuration.md) own client constraints.
+[Minimal evidence](../../minimal-port.md) preserves existing results.
+[Sophia's paired plan](https://github.com/sophia-org/sophia-stack/blob/master/docs/notes/plans/1m3z9q0j-lom-and-sophia-portable-gpu-shell-critical-path.md)
+owns server exits; [its decision](https://github.com/sophia-org/sophia-stack/blob/master/docs/notes/decisions/mn4mzcnf-separate-shell-presentation-from-gpu-execution-permission.md)
+owns GPU/presentation policy. [Active tasks](../../../todo.md) own local status.
