@@ -48,7 +48,6 @@ struct Panel {
     model: Model,
     current_slot: Option<usize>,
     resources: [ResourceSlot; 2],
-    candidate_generation: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -71,6 +70,7 @@ pub struct ShellService<R> {
     panels: Vec<Panel>,
     next_transaction: u64,
     next_demand: u64,
+    next_candidate_generation: u64,
     dirty: bool,
     last_second: u64,
     latest_indicators: Option<ShellIndicatorSnapshot>,
@@ -110,6 +110,7 @@ impl<R: ContentRenderer> ShellService<R> {
             panels: Vec::new(),
             next_transaction: 1,
             next_demand: 1,
+            next_candidate_generation: 1,
             dirty: true,
             last_second: unix_second(),
             latest_indicators: None,
@@ -272,7 +273,6 @@ impl<R: ContentRenderer> ShellService<R> {
                         generation: 1,
                     },
                 ],
-                candidate_generation: 1,
             });
         }
         Ok(())
@@ -324,16 +324,19 @@ impl<R: ContentRenderer> ShellService<R> {
     }
 
     fn present(&mut self, index: usize, pixels: ContentPixels) -> Result<(), String> {
-        let (slot_index, slot, old, candidate) = {
+        let (slot_index, slot, old) = {
             let panel = &self.panels[index];
             let slot_index = panel.current_slot.map_or(0, |slot| 1 - slot);
             (
                 slot_index,
                 panel.resources[slot_index],
                 panel.current_slot.map(|old| panel.resources[old]),
-                panel.candidate_generation,
             )
         };
+        // Candidate generations identify records whose chunks and End do not
+        // carry an output. They are therefore monotonic across the complete
+        // content grant, rather than restarting for each panel.
+        let candidate = self.next_candidate_generation;
         let resource = ContentResourceId {
             id: slot.id,
             generation: slot.generation,
@@ -388,7 +391,7 @@ impl<R: ContentRenderer> ShellService<R> {
         }
         let panel = &mut self.panels[index];
         panel.current_slot = Some(slot_index);
-        panel.candidate_generation = candidate
+        self.next_candidate_generation = candidate
             .checked_add(1)
             .ok_or("candidate generation exhausted")?;
         Ok(())

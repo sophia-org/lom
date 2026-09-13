@@ -179,6 +179,18 @@ revocation, retained old storage and restart. Show fresh allocations and
 presentations, exact terminal outcomes, no stale activation/reuse, and bounded
 metadata/backlog. Add measurable idle wakeup and dirty-output scheduling checks.
 
+The attended `20260913T221559Z` run on Sophia `826cff1b` and Lom `4340aa0`
+rendered the panel and workspace pills on output 1, while output 2 stayed empty.
+Sophia published both outputs, then each fresh grant prepared and presented
+candidate generation 1 on output 1 before Lom exited and reconnected. The client
+had incorrectly restarted candidate generations for every panel; r5 requires a
+single grant-wide increasing sequence because CandidateChunk and CandidateEnd
+omit output. Output 2 therefore repeated generation 1 and was rejected stale.
+The repair moves generation ownership to ShellService and pins two distinct
+outputs to generations 1 then 2 through a real-socket lifecycle test. This is
+deterministic multi-output recovery evidence, not native acceptance; a later
+attended run must still show stable panels on both outputs without reconnects.
+
 ### t020
 
 Preserve the descriptor switcher/launcher and any other capabilities the client

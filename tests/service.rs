@@ -34,6 +34,10 @@ const OUTPUT: ContentOutputId = ContentOutputId {
     id: 2,
     generation: 3,
 };
+const SECOND_OUTPUT: ContentOutputId = ContentOutputId {
+    id: 3,
+    generation: 4,
+};
 
 struct FixedRenderer {
     calls: usize,
@@ -41,6 +45,24 @@ struct FixedRenderer {
     started: Option<std::sync::mpsc::Sender<()>>,
     release: std::sync::mpsc::Receiver<()>,
     gate_first: bool,
+}
+
+struct ImmediateRenderer(Option<ContentPixels>);
+
+impl ContentRenderer for ImmediateRenderer {
+    fn submit(&mut self, _model: Model, width: u32, height: u32, scale: f64) -> Result<(), String> {
+        assert_eq!((width, height, scale), (8, 48, 2.0));
+        self.0 = Some(ContentPixels::from_rgba8(
+            width,
+            height,
+            vec![255; (width * height * 4) as usize],
+        )?);
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Result<Option<ContentPixels>, String> {
+        Ok(self.0.take())
+    }
 }
 impl ContentRenderer for FixedRenderer {
     fn submit(&mut self, model: Model, width: u32, height: u32, scale: f64) -> Result<(), String> {
@@ -131,6 +153,141 @@ fn persistent_service_negotiates_allocates_uploads_and_waits_for_native_presenta
     done_sender.send(()).unwrap();
     server.join().unwrap();
     let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn candidate_generations_are_unique_across_outputs() {
+    let path = std::env::temp_dir().join(format!(
+        "lom-serve-multi-output-{}-{}.sock",
+        std::process::id(),
+        SOCKET_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let listener = UnixListener::bind(&path).unwrap();
+    let (done_sender, done_receiver) = std::sync::mpsc::channel();
+    let server =
+        std::thread::spawn(move || serve_two_outputs(listener.accept().unwrap().0, done_receiver));
+    let capabilities = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
+        | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
+        | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS;
+    let connection = ShellConnection::connect(
+        &path,
+        ShellClientOptions {
+            minimum_revision: 6,
+            maximum_revision: 6,
+            required_capabilities: capabilities,
+            handshake_timeout: Duration::from_secs(2),
+        },
+    )
+    .unwrap();
+    let (config, theme) =
+        parse_shell_config(include_str!("../examples/minimal/shell.kdl")).unwrap();
+    let mut service =
+        ShellService::new(connection, config, theme, 48, ImmediateRenderer(None)).unwrap();
+    let mut presented = 0;
+    while presented < 2 {
+        presented += service.step().unwrap();
+    }
+    done_sender.send(()).unwrap();
+    server.join().unwrap();
+    let _ = std::fs::remove_file(path);
+}
+
+fn serve_two_outputs(mut stream: UnixStream, done: std::sync::mpsc::Receiver<()>) {
+    let hello = read_frame(&mut stream);
+    let ShellV1ClientHello {
+        minimum_revision,
+        maximum_revision,
+        required_capabilities,
+    } = decode_shell_v1_client_hello_frame(&hello).unwrap();
+    assert_eq!((minimum_revision, maximum_revision), (6, 6));
+    let expected = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
+        | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
+        | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS;
+    assert_eq!(required_capabilities, expected);
+    stream
+        .write_all(
+            &encode_shell_v1_server_welcome_frame(ShellV1ServerWelcome {
+                selected_revision: 6,
+                capabilities: expected,
+                connection_epoch: GRANT.connection_epoch,
+                max_descriptors: 16,
+                max_label_bytes: 32,
+                max_pending_activations: 16,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+    send(
+        &mut stream,
+        0,
+        ShellContentRecord::Limits(sophia_protocol::ContentLimits::prototype(GRANT)),
+    );
+    send(
+        &mut stream,
+        2,
+        ShellContentRecord::OutputFacts(ContentOutputFacts {
+            grant: GRANT,
+            facts_generation: 4,
+            outputs: [OUTPUT, SECOND_OUTPUT]
+                .into_iter()
+                .map(|output| ContentOutputFactsEntry {
+                    output,
+                    local_width: 4,
+                    local_height: 32,
+                    scale_numerator: 2,
+                    scale_denominator: 1,
+                    scale_generation: 5,
+                })
+                .collect(),
+        }),
+    );
+    let mut allocations = Vec::new();
+    for (index, output) in [OUTPUT, SECOND_OUTPUT].into_iter().enumerate() {
+        let (transaction, ShellContentRecord::AllocationRequest(request)) = receive(&mut stream)
+        else {
+            panic!("expected allocation request");
+        };
+        assert_eq!(request.output, output);
+        let allocation = ContentAllocationId {
+            id: 11 + index as u64,
+            generation: 1,
+        };
+        allocations.push(allocation);
+        send_tx(
+            &mut stream,
+            transaction,
+            ShellContentRecord::AllocationResult(ContentAllocationResult {
+                grant: GRANT,
+                allocation_request_id: request.allocation_request_id,
+                status: 1,
+                reason: ContentReason::None as u16,
+                output,
+                allocation,
+                parent: ContentAllocationId::default(),
+                scale_generation: 5,
+                logical: ContentLogicalRect {
+                    x: 0,
+                    y: 0,
+                    width: 4,
+                    height: 24,
+                },
+                pixel: ContentPixelRect {
+                    x: 0,
+                    y: 0,
+                    width: 8,
+                    height: 48,
+                },
+                scale_numerator: 2,
+                scale_denominator: 1,
+                allowed_reservation_extent: 48,
+                margins: ContentMargins::default(),
+                acknowledged_anchor: ContentPixelRect::default(),
+            }),
+        );
+    }
+    serve_frame(&mut stream, OUTPUT, allocations[0], 1, 22, 31);
+    serve_frame(&mut stream, SECOND_OUTPUT, allocations[1], 2, 23, 32);
+    done.recv_timeout(Duration::from_secs(2)).unwrap();
 }
 
 fn serve_one(
@@ -273,8 +430,8 @@ fn serve_one(
         stream.write_all(&frame).unwrap();
     }
     render_release.send(()).unwrap();
-    let first = serve_frame(&mut stream, allocation, 1, 22, 31);
-    let second = serve_frame(&mut stream, allocation, 2, 23, 32);
+    let first = serve_frame(&mut stream, OUTPUT, allocation, 1, 22, 31);
+    let second = serve_frame(&mut stream, OUTPUT, allocation, 2, 23, 32);
     assert_ne!(first, second, "a live resource cannot be overwritten");
     let (retire_tx, ShellContentRecord::ResourceRetire(retire)) = receive(&mut stream) else {
         panic!("expected resource retirement after its successor presented");
@@ -294,6 +451,7 @@ fn serve_one(
 
 fn serve_frame(
     stream: &mut UnixStream,
+    output: ContentOutputId,
     allocation: ContentAllocationId,
     expected_candidate: u64,
     permit_id: u64,
@@ -341,13 +499,14 @@ fn serve_frame(
     let (demand_tx, ShellContentRecord::FrameDemand(demand)) = receive(stream) else {
         panic!("expected frame demand");
     };
+    assert_eq!(demand.output, output);
     assert_eq!(demand.allocation, allocation);
     send_tx(
         stream,
         demand_tx,
         ShellContentRecord::FramePermit(ContentFramePermit {
             grant: GRANT,
-            output: OUTPUT,
+            output,
             demand_id: demand.demand_id,
             permit_id,
             state: 1,
@@ -378,7 +537,7 @@ fn serve_frame(
             ShellContentRecord::CandidateOutcome(sophia_protocol::ContentCandidateOutcome {
                 grant: GRANT,
                 candidate_generation: candidate.candidate_generation,
-                output: OUTPUT,
+                output,
                 kind,
                 reason: ContentReason::None as u16,
                 presentation_epoch: epoch,
