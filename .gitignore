@@ -3,3 +3,7 @@
 *.profraw
 __pycache__/
 *.py[cod]
+
+/.zk/notebook.db*
+/.zk/*.log
+/.todo/report.txt

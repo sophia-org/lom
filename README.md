@@ -89,8 +89,11 @@ exchange as native presentation.
 
 ## Architecture and development
 
-Read [ARCHITECTURE.md](ARCHITECTURE.md), [the style guide](docs/style-guide.md)
-and [the implementation evidence](docs/minimal-port.md).
+Read [ARCHITECTURE.md](ARCHITECTURE.md), [the style guide](docs/style-guide.md),
+[the implementation evidence](docs/minimal-port.md), and the
+[daily-driver queue](todo.md). Lom tracks work with repository-local todo.txt
+and `zk`; the [tracking contract](docs/work-tracking.md) defines task identity,
+ordering, completion, and evidence.
 
 - Xilem owns reconciliation; the application model contains no widgets or GPU objects.
 - The runtime serializes observations and owns effects. Widgets emit semantic messages.
