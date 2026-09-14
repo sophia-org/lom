@@ -225,6 +225,8 @@ impl<R: ContentRenderer> ShellService<R> {
 
     fn allocate_panels(&mut self, allowance: u32) -> Result<(), String> {
         let outputs = self.facts.outputs.clone();
+        let output_count =
+            u64::try_from(outputs.len()).map_err(|_| "output count exceeds resource identity")?;
         for (index, output) in outputs.into_iter().enumerate() {
             let request_id = u64::try_from(index + 1).map_err(|_| "too many outputs")?;
             let (desired_width, desired_height) = match self.config.position {
@@ -284,11 +286,13 @@ impl<R: ContentRenderer> ShellService<R> {
                 model.workspaces = workspace_snapshot(snapshot);
                 model.epoch = snapshot.connection_epoch;
             }
-            let base = u64::try_from(index)
-                .map_err(|_| "output index overflow")?
-                .checked_mul(2)
-                .and_then(|value| value.checked_add(1))
+            let primary = u64::try_from(index + 1).map_err(|_| "output index overflow")?;
+            let alternate = output_count
+                .checked_add(primary)
                 .ok_or("resource identity exhausted")?;
+            // New resource IDs are admitted in panel iteration order. Keep each
+            // panel's alternate slot after every panel's primary slot so first
+            // use is globally monotonic under the grant's resource high-water.
             self.panels.push(Panel {
                 output,
                 allocation,
@@ -297,11 +301,11 @@ impl<R: ContentRenderer> ShellService<R> {
                 presented: None,
                 resources: [
                     ResourceSlot {
-                        id: base,
+                        id: primary,
                         generation: 1,
                     },
                     ResourceSlot {
-                        id: base + 1,
+                        id: alternate,
                         generation: 1,
                     },
                 ],

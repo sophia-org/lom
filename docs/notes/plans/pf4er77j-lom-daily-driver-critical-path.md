@@ -199,6 +199,19 @@ outputs to generations 1 then 2 through a real-socket lifecycle test. This is
 deterministic multi-output recovery evidence, not native acceptance; a later
 attended run must still show stable panels on both outputs without reconnects.
 
+The attended `20260914T011705Z` run on Sophia `56fc17a2` and Lom `d09e100`
+removed the native content-ownership fatal and presented both outputs for the
+full 20-second window. It did not establish a stable shell: 21 GPU grants and 20
+`ResourceBegin` stale rejections show that each first dirty update restarted
+Lom. Resource slots were interleaved per output (`[1,2]`, then `[3,4]`), so first
+use followed `1,3,2`; after admitting 3, Sophia correctly refused the previously
+unseen 2 below the grant-wide resource-ID high-water. Lom now assigns all
+primary slots `1..N` and all alternates `N+1..2N`, making first use `1,2,3,4`
+before later exact generation reuse. The real-socket two-output lifecycle pins
+that order and the complete project gate passes. A new attended run must still
+show one stable grant, repeated updates on both outputs, and an accepted
+presented-content action; this source repair does not supply those observations.
+
 ### t020
 
 Preserve the descriptor switcher/launcher and any other capabilities the client

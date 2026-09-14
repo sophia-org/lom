@@ -613,6 +613,14 @@ fn serve_frame(
         (begin.width_px, begin.height_px, begin.total_bytes),
         (8, 48, 1536)
     );
+    assert_eq!(
+        begin.resource,
+        ContentResourceId {
+            id: expected_candidate,
+            generation: 1,
+        },
+        "new resource IDs must first appear in global grant order"
+    );
     send_tx(
         stream,
         upload_tx,
