@@ -4,18 +4,24 @@ use lom::{
     config::parse_shell_config,
     model::Model,
     protocol::ContentPixels,
-    service::{ContentRenderer, ShellService},
+    service::{ContentRenderer, RenderedContent, ShellService},
+    ui::ContentTargetLayout,
+    update::Msg,
 };
 use sophia_protocol::{
-    ContentAllocationId, ContentAllocationResult, ContentFramePermit, ContentGrant,
+    ContentAction, ContentAllocationId, ContentAllocationResult, ContentFramePermit, ContentGrant,
     ContentLogicalRect, ContentMargins, ContentOutputFacts, ContentOutputFactsEntry,
     ContentOutputId, ContentPixelRect, ContentReason, ContentResourceId, ContentResourceStatus,
     OutputId, POLICY_INDICATOR_STATE_ACTIVE, SOPHIA_IPC_HEADER_LEN,
-    SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE, SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER,
+    SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT, SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE,
+    SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER, SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION,
     SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS, ShellContentRecord, ShellIndicator,
-    ShellIndicatorSnapshot, ShellV1ClientHello, ShellV1ServerWelcome, TransactionId, decode_frame,
-    decode_shell_content_frame, decode_shell_v1_client_hello_frame, encode_shell_content_frame,
-    encode_shell_indicator_snapshot, encode_shell_v1_server_welcome_frame,
+    ShellIndicatorActivationOutcome, ShellIndicatorActivationStatus, ShellIndicatorSnapshot,
+    ShellV1ClientHello, ShellV1ServerWelcome, TransactionId, decode_frame,
+    decode_shell_content_frame, decode_shell_indicator_activation,
+    decode_shell_v1_client_hello_frame, encode_shell_content_frame,
+    encode_shell_indicator_activation_outcome, encode_shell_indicator_snapshot,
+    encode_shell_v1_server_welcome_frame,
 };
 use sophia_shell_client::{ShellClientOptions, ShellConnection};
 use std::{
@@ -45,6 +51,7 @@ struct FixedRenderer {
     started: Option<std::sync::mpsc::Sender<()>>,
     release: std::sync::mpsc::Receiver<()>,
     gate_first: bool,
+    target_message: Option<Msg>,
 }
 
 struct ImmediateRenderer(Option<ContentPixels>);
@@ -60,8 +67,11 @@ impl ContentRenderer for ImmediateRenderer {
         Ok(())
     }
 
-    fn poll(&mut self) -> Result<Option<ContentPixels>, String> {
-        Ok(self.0.take())
+    fn poll(&mut self) -> Result<Option<RenderedContent>, String> {
+        Ok(self.0.take().map(|pixels| RenderedContent {
+            pixels,
+            targets: Vec::new(),
+        }))
     }
 }
 impl ContentRenderer for FixedRenderer {
@@ -71,7 +81,10 @@ impl ContentRenderer for FixedRenderer {
         if let Some(started) = self.started.take() {
             started.send(()).unwrap();
         }
-        let expected_generation = 5 + self.calls as u64;
+        // The clock may make the panel dirty again while this real-socket
+        // scenario waits for action feedback.  A redraw after the second
+        // publication still carries that publication's generation.
+        let expected_generation = if self.calls == 1 { 6 } else { 7 };
         assert_eq!(model.workspaces.generation, expected_generation);
         assert_eq!(model.workspaces.active_output, Some(OUTPUT.id));
         assert_eq!(
@@ -79,6 +92,13 @@ impl ContentRenderer for FixedRenderer {
             if self.calls == 1 { "one" } else { "two" }
         );
         assert!(model.workspaces.entries[0].active);
+        self.target_message = Some(Msg::ActivateWorkspace {
+            owner: model.module_id(0),
+            epoch: model.workspaces.epoch,
+            generation: model.workspaces.generation,
+            indicator: model.workspaces.entries[0].id,
+            action: model.workspaces.entries[0].action.unwrap(),
+        });
         self.completed = Some(ContentPixels::from_rgba8(
             width,
             height,
@@ -87,14 +107,29 @@ impl ContentRenderer for FixedRenderer {
         Ok(())
     }
 
-    fn poll(&mut self) -> Result<Option<ContentPixels>, String> {
+    fn poll(&mut self) -> Result<Option<RenderedContent>, String> {
         if self.gate_first {
             if self.release.try_recv().is_err() {
                 return Ok(None);
             }
             self.gate_first = false;
         }
-        Ok(self.completed.take())
+        Ok(self.completed.take().map(|pixels| {
+            let message = self.target_message.take().expect("render target message");
+            RenderedContent {
+                pixels,
+                targets: vec![ContentTargetLayout {
+                    message,
+                    indicator: 14,
+                    action: 15,
+                    generation: 7,
+                    x: 0,
+                    y: 0,
+                    width: 8,
+                    height: 48,
+                }],
+            }
+        }))
     }
 }
 
@@ -109,17 +144,21 @@ fn persistent_service_negotiates_allocates_uploads_and_waits_for_native_presenta
     let (done_sender, done_receiver) = std::sync::mpsc::channel();
     let (started_sender, started_receiver) = std::sync::mpsc::channel();
     let (release_sender, release_receiver) = std::sync::mpsc::channel();
+    let (activation_sender, activation_receiver) = std::sync::mpsc::channel();
     let server = std::thread::spawn(move || {
         serve_one(
             listener.accept().unwrap().0,
             done_receiver,
             started_receiver,
             release_sender,
+            activation_sender,
         )
     });
     let capabilities = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
-        | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS;
+        | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
+        | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
+        | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION;
     let connection = ShellConnection::connect(
         &path,
         ShellClientOptions {
@@ -143,12 +182,22 @@ fn persistent_service_negotiates_allocates_uploads_and_waits_for_native_presenta
             started: Some(started_sender),
             release: release_receiver,
             gate_first: true,
+            target_message: None,
         },
     )
     .unwrap();
     let mut presented = 0;
     while presented < 2 {
         presented += service.step().unwrap();
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while activation_receiver.try_recv().is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "activation did not complete"
+        );
+        service.step().unwrap();
+        std::thread::yield_now();
     }
     done_sender.send(()).unwrap();
     server.join().unwrap();
@@ -285,8 +334,8 @@ fn serve_two_outputs(mut stream: UnixStream, done: std::sync::mpsc::Receiver<()>
             }),
         );
     }
-    serve_frame(&mut stream, OUTPUT, allocations[0], 1, 22, 31);
-    serve_frame(&mut stream, SECOND_OUTPUT, allocations[1], 2, 23, 32);
+    serve_frame(&mut stream, OUTPUT, allocations[0], 1, 22, 31, 0);
+    serve_frame(&mut stream, SECOND_OUTPUT, allocations[1], 2, 23, 32, 0);
     done.recv_timeout(Duration::from_secs(2)).unwrap();
 }
 
@@ -295,6 +344,7 @@ fn serve_one(
     done: std::sync::mpsc::Receiver<()>,
     render_started: std::sync::mpsc::Receiver<()>,
     render_release: std::sync::mpsc::Sender<()>,
+    activation_done: std::sync::mpsc::Sender<()>,
 ) {
     let hello = read_frame(&mut stream);
     let ShellV1ClientHello {
@@ -305,7 +355,9 @@ fn serve_one(
     assert_eq!((minimum_revision, maximum_revision), (6, 6));
     let expected = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
-        | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS;
+        | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
+        | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
+        | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION;
     assert_eq!(required_capabilities, expected);
     stream
         .write_all(
@@ -430,8 +482,8 @@ fn serve_one(
         stream.write_all(&frame).unwrap();
     }
     render_release.send(()).unwrap();
-    let first = serve_frame(&mut stream, OUTPUT, allocation, 1, 22, 31);
-    let second = serve_frame(&mut stream, OUTPUT, allocation, 2, 23, 32);
+    let first = serve_frame(&mut stream, OUTPUT, allocation, 1, 22, 31, 1);
+    let second = serve_frame(&mut stream, OUTPUT, allocation, 2, 23, 32, 1);
     assert_ne!(first, second, "a live resource cannot be overwritten");
     let (retire_tx, ShellContentRecord::ResourceRetire(retire)) = receive(&mut stream) else {
         panic!("expected resource retirement after its successor presented");
@@ -446,6 +498,64 @@ fn serve_one(
             reason: ContentReason::None as u16,
         }),
     );
+    let action = ContentAction {
+        grant: GRANT,
+        output: OUTPUT,
+        candidate_generation: 2,
+        presentation_epoch: 32,
+        interaction_generation: 1,
+        allocation,
+        target_id: 14,
+        target_generation: 7,
+        action_id: 15,
+        event_id: 41,
+        kind: 1,
+        reason: 0,
+    };
+    send(&mut stream, 91, ShellContentRecord::Action(action.clone()));
+    let (_, ShellContentRecord::ActionAck(ack)) = receive(&mut stream) else {
+        panic!("expected content action acknowledgement");
+    };
+    assert_eq!((ack.event_id, ack.disposition), (41, 1));
+    let frame = read_frame(&mut stream);
+    let (activation_tx, activation) = decode_shell_indicator_activation(&frame).unwrap();
+    assert_eq!(
+        (activation.event_id, activation.indicator, activation.action),
+        (41, 14, 15)
+    );
+    stream
+        .write_all(
+            &encode_shell_indicator_activation_outcome(
+                activation_tx,
+                &ShellIndicatorActivationOutcome {
+                    connection_epoch: GRANT.connection_epoch,
+                    snapshot_generation: 7,
+                    event_id: 41,
+                    status: ShellIndicatorActivationStatus::Accepted,
+                    reason: 0,
+                },
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    send(&mut stream, 92, ShellContentRecord::Action(action));
+    let (_, ShellContentRecord::ActionAck(duplicate)) = receive(&mut stream) else {
+        panic!("expected duplicate action rejection");
+    };
+    assert_eq!((duplicate.event_id, duplicate.disposition), (41, 2));
+    stream
+        .set_read_timeout(Some(Duration::from_millis(50)))
+        .unwrap();
+    let mut unexpected = [0_u8; 1];
+    let error = stream
+        .read(&mut unexpected)
+        .expect_err("a duplicate action must not emit a second activation");
+    assert!(matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    ));
+    stream.set_read_timeout(None).unwrap();
+    activation_done.send(()).unwrap();
     done.recv_timeout(Duration::from_secs(2)).unwrap();
 }
 
@@ -456,6 +566,7 @@ fn serve_frame(
     expected_candidate: u64,
     permit_id: u64,
     presentation_epoch: u64,
+    target_count: u32,
 ) -> ContentResourceId {
     let (upload_tx, ShellContentRecord::ResourceBegin(begin)) = receive(stream) else {
         panic!("expected resource begin");
@@ -526,9 +637,10 @@ fn serve_frame(
     };
     assert_eq!(candidate.candidate_generation, expected_candidate);
     assert_eq!(candidate.pacing_permit, permit_id);
-    assert_eq!(candidate.target_count, 0);
+    assert_eq!(candidate.target_count, target_count);
     assert_eq!(chunk.surfaces[0].reservation_extent, 48);
     assert_eq!(chunk.placements[0].resource, begin.resource);
+    assert_eq!(chunk.targets.len(), target_count as usize);
     assert_eq!(end.candidate_generation, candidate.candidate_generation);
     for (kind, epoch) in [(1, 0), (2, presentation_epoch)] {
         send(

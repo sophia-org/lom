@@ -75,13 +75,13 @@ lom --serve
 terminal. It requires `SOPHIA_SHELL_SOCKET`, `SOPHIA_SHELL_CONFIG` and
 `SOPHIA_SHELL_BAR_THICKNESS`, negotiates revision 6, allocates one panel per
 published output, renders with Vello, and waits for actual `Presented` outcomes
-before retiring replaced resources. The current Sophia profile denies production
-content behind the earlier GPU-admission placeholder. The accepted
+before retiring replaced resources. Production content and its discrete workspace actions remain default-denied in
+the Sophia profile. The accepted
 [replacement decision](docs/notes/decisions/1qikt1av-use-explicit-gpu-permission-with-renderer-neutral-sophia-presentation.md)
 uses explicit direct GPU permission on stock Linux, with no custom kernel or
-hard aggregate VRAM guarantee. Its launch integration is not implemented yet;
-the launch integration and exact DRM adapter check are implemented, while
-hardware and native acceptance remain open. This documentation does not enable
+hard aggregate VRAM guarantee. The launch integration and exact DRM adapter check are implemented, as are
+Masonry-derived workspace targets and the action acknowledgement path. Hardware
+and native pointer acceptance remain open. This documentation does not enable
 the grant or an ambient display fallback. Running `lom`
 without a command exits with status 2. Nothing here installs or changes the
 current desktop.

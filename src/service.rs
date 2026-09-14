@@ -1,24 +1,29 @@
 //! Persistent, display-independent Sophia content lifecycle.
 
+mod presentation;
+use presentation::PendingPresentation;
+
 use crate::{
     config::{ModuleKind, PanelConfig, Position, Theme},
     model::{Model, Workspace, WorkspaceSnapshot},
     protocol::ContentPixels,
+    ui::ContentTargetLayout,
 };
 use chrono::{DateTime, FixedOffset, Utc};
 use sophia_protocol::{
-    ContentAllocationId, ContentAllocationRequest, ContentAllocationResult, ContentCandidateBegin,
-    ContentCandidateChunk, ContentCandidateEnd, ContentFrameDemand, ContentFramePermit,
-    ContentMargins, ContentOutputFacts, ContentOutputFactsEntry, ContentPixelRect,
-    ContentPlacement, ContentReason, ContentResourceBegin, ContentResourceChunk,
-    ContentResourceEnd, ContentResourceId, ContentResourceRetire, ContentSurface,
-    POLICY_INDICATOR_STATE_ACTIVE, POLICY_INDICATOR_STATE_URGENT,
-    POLICY_INDICATOR_STATE_VISIBLE_ELSEWHERE, ShellContentRecord, ShellIndicatorSnapshot,
+    ContentAction, ContentActionAck, ContentAllocationId, ContentAllocationRequest,
+    ContentAllocationResult, ContentCandidateBegin, ContentCandidateChunk, ContentCandidateEnd,
+    ContentFrameDemand, ContentFramePermit, ContentMargins, ContentOutputFacts,
+    ContentOutputFactsEntry, ContentPixelRect, ContentPlacement, ContentReason,
+    ContentResourceBegin, ContentResourceChunk, ContentResourceEnd, ContentResourceId,
+    ContentResourceRetire, ContentSurface, ContentTarget, POLICY_INDICATOR_STATE_ACTIVE,
+    POLICY_INDICATOR_STATE_URGENT, POLICY_INDICATOR_STATE_VISIBLE_ELSEWHERE, ShellContentRecord,
+    ShellIndicatorActivation, ShellIndicatorActivationStatus, ShellIndicatorSnapshot,
     TransactionId,
 };
 use sophia_shell_client::ShellConnection;
 use std::{
-    collections::VecDeque,
+    collections::{BTreeSet, VecDeque},
     time::{Duration, Instant, SystemTime},
 };
 
@@ -31,7 +36,15 @@ const CREATE_ALLOCATION: u16 = 1;
 const RESOURCE_ACCEPTED: u16 = 2;
 const PERMIT_GRANTED: u16 = 1;
 const CANDIDATE_PRESENTED: u16 = 2;
-const CANDIDATE_REJECTED: u16 = 3;
+
+/// Pixels and action targets resolved by one immutable layout pass.
+#[derive(Debug, PartialEq)]
+pub struct RenderedContent {
+    /// Complete panel pixels.
+    pub pixels: ContentPixels,
+    /// Workspace hit regions from the same Masonry layout.
+    pub targets: Vec<ContentTargetLayout>,
+}
 
 /// Produces one complete panel resource from passive application state.
 pub trait ContentRenderer {
@@ -39,7 +52,7 @@ pub trait ContentRenderer {
     fn submit(&mut self, model: Model, width: u32, height: u32, scale: f64) -> Result<(), String>;
 
     /// Poll the sole in-flight render without blocking protocol ownership.
-    fn poll(&mut self) -> Result<Option<ContentPixels>, String>;
+    fn poll(&mut self) -> Result<Option<RenderedContent>, String>;
 }
 
 struct Panel {
@@ -47,7 +60,15 @@ struct Panel {
     allocation: ContentAllocationResult,
     model: Model,
     current_slot: Option<usize>,
+    presented: Option<PresentedPanel>,
     resources: [ResourceSlot; 2],
+}
+
+#[derive(Clone, Debug)]
+struct PresentedPanel {
+    candidate_generation: u64,
+    presentation_epoch: u64,
+    targets: Vec<ContentTargetLayout>,
 }
 
 #[derive(Clone, Copy)]
@@ -75,6 +96,9 @@ pub struct ShellService<R> {
     last_second: u64,
     latest_indicators: Option<ShellIndicatorSnapshot>,
     pending_content: VecDeque<ShellContentRecord>,
+    activation_high_water: u64,
+    pending_activation_events: BTreeSet<u64>,
+    presentation: Option<PendingPresentation>,
     rendering_panel: Option<usize>,
     next_panel: Option<usize>,
 }
@@ -115,6 +139,9 @@ impl<R: ContentRenderer> ShellService<R> {
             last_second: unix_second(),
             latest_indicators: None,
             pending_content: VecDeque::new(),
+            activation_high_water: 0,
+            pending_activation_events: BTreeSet::new(),
+            presentation: None,
             rendering_panel: None,
             next_panel: None,
         };
@@ -145,13 +172,17 @@ impl<R: ContentRenderer> ShellService<R> {
             }
             self.dirty |= observed_clock;
         }
+        if self.presentation.is_some() {
+            return self.advance_presentation().map(usize::from);
+        }
+        self.service_pending_actions()?;
         if let Some(index) = self.rendering_panel {
-            let Some(pixels) = self.renderer.poll()? else {
+            let Some(content) = self.renderer.poll()? else {
                 return Ok(0);
             };
             self.rendering_panel = None;
-            self.present(index, pixels)?;
-            return Ok(1);
+            self.begin_presentation(index, content)?;
+            return Ok(0);
         }
         if self.next_panel.is_none() && self.dirty {
             self.dirty = false;
@@ -263,6 +294,7 @@ impl<R: ContentRenderer> ShellService<R> {
                 allocation,
                 model,
                 current_slot: None,
+                presented: None,
                 resources: [
                     ResourceSlot {
                         id: base,
@@ -299,6 +331,24 @@ impl<R: ContentRenderer> ShellService<R> {
             self.dirty = true;
         }
         for _ in 0..MAX_OBSERVATIONS_PER_TURN {
+            let Some((_, outcome)) = self
+                .connection
+                .poll_indicator_activation_outcome()
+                .map_err(|error| format!("indicator outcome receive failed: {error}"))?
+            else {
+                break;
+            };
+            if !self.pending_activation_events.remove(&outcome.event_id) {
+                continue;
+            }
+            if outcome.status != ShellIndicatorActivationStatus::Accepted {
+                eprintln!(
+                    "lom_workspace_activation schema=1 status=rejected event_id={} reason={}",
+                    outcome.event_id, outcome.reason
+                );
+            }
+        }
+        for _ in 0..MAX_OBSERVATIONS_PER_TURN {
             let Some((_, record)) = self
                 .connection
                 .poll_content()
@@ -323,272 +373,106 @@ impl<R: ContentRenderer> ShellService<R> {
         Ok(())
     }
 
-    fn present(&mut self, index: usize, pixels: ContentPixels) -> Result<(), String> {
-        let (slot_index, slot, old) = {
-            let panel = &self.panels[index];
-            let slot_index = panel.current_slot.map_or(0, |slot| 1 - slot);
-            (
-                slot_index,
-                panel.resources[slot_index],
-                panel.current_slot.map(|old| panel.resources[old]),
-            )
-        };
-        // Candidate generations identify records whose chunks and End do not
-        // carry an output. They are therefore monotonic across the complete
-        // content grant, rather than restarting for each panel.
-        let candidate = self.next_candidate_generation;
-        let resource = ContentResourceId {
-            id: slot.id,
-            generation: slot.generation,
-        };
-        self.upload(resource, &pixels, index)?;
-        let demand_id = self.next_demand;
-        self.next_demand = demand_id
-            .checked_add(1)
-            .ok_or("frame demand identity exhausted")?;
-        let output = self.panels[index].output.output;
-        let allocation = self.panels[index].allocation.allocation;
-        self.send(ShellContentRecord::FrameDemand(ContentFrameDemand {
-            grant: self.limits.grant,
-            output,
-            allocation,
-            demand_id,
-            reason: 1,
-        }))?;
-        let permit = self.wait_permit(output, demand_id)?;
-        self.submit_candidate(index, resource, candidate, permit)?;
-        self.wait_presented(output, candidate)?;
-        let indicator_generation = self
-            .latest_indicators
-            .as_ref()
-            .map_or(0, |snapshot| snapshot.generation);
-        println!(
-            "lom_panel_candidate schema=1 status=presented output={} candidate_generation={} indicator_generation={} width={} height={} bytes={} checksum={:016x}",
-            output.id,
-            candidate,
-            indicator_generation,
-            pixels.width(),
-            pixels.height(),
-            pixels.bytes().len(),
-            pixel_checksum(pixels.bytes()),
-        );
-        if let Some(old) = old {
-            let old = ContentResourceId {
-                id: old.id,
-                generation: old.generation,
+    fn service_pending_actions(&mut self) -> Result<(), String> {
+        for _ in 0..MAX_OBSERVATIONS_PER_TURN {
+            let Some(at) = self
+                .pending_content
+                .iter()
+                .position(|record| matches!(record, ShellContentRecord::Action(_)))
+            else {
+                break;
             };
-            self.send(ShellContentRecord::ResourceRetire(ContentResourceRetire {
-                grant: self.limits.grant,
-                resource: old,
-            }))?;
-            self.wait_released(old)?;
-            let old_index = 1 - slot_index;
-            self.panels[index].resources[old_index].generation = self.panels[index].resources
-                [old_index]
-                .generation
-                .checked_add(1)
-                .ok_or("resource generation exhausted")?;
+            let Some(ShellContentRecord::Action(action)) = self.pending_content.remove(at) else {
+                unreachable!("position selected an action");
+            };
+            self.handle_content_action(action)?;
         }
-        let panel = &mut self.panels[index];
-        panel.current_slot = Some(slot_index);
-        self.next_candidate_generation = candidate
-            .checked_add(1)
-            .ok_or("candidate generation exhausted")?;
         Ok(())
     }
 
-    fn upload(
-        &mut self,
-        resource: ContentResourceId,
-        pixels: &ContentPixels,
-        panel: usize,
-    ) -> Result<(), String> {
-        let chunk_count = u32::try_from(
-            pixels
-                .chunks(self.limits.max_frame_payload, self.limits.max_chunk_bytes)?
-                .count(),
-        )
-        .map_err(|_| "resource chunk count exceeds the protocol")?;
+    fn handle_content_action(&mut self, action: ContentAction) -> Result<(), String> {
+        let mut message = None;
+        if action.kind == 1
+            && action.reason == ContentReason::None as u16
+            && action.event_id != 0
+            && action.event_id > self.activation_high_water
+            && action.grant == self.limits.grant
+        {
+            message = self.panels.iter().find_map(|panel| {
+                let presented = panel.presented.as_ref()?;
+                if panel.output.output != action.output
+                    || panel.allocation.allocation != action.allocation
+                    || presented.candidate_generation != action.candidate_generation
+                    || presented.presentation_epoch != action.presentation_epoch
+                    || action.interaction_generation != 1
+                {
+                    return None;
+                }
+                presented
+                    .targets
+                    .iter()
+                    .find(|target| {
+                        target.indicator == action.target_id
+                            && target.generation == action.target_generation
+                            && target.action == action.action_id
+                    })
+                    .map(|target| target.message.clone())
+            });
+        }
+        let accepted = if let Some(message) = message {
+            let panel = self
+                .panels
+                .iter_mut()
+                .find(|panel| panel.output.output == action.output)
+                .ok_or("content action output disappeared")?;
+            crate::update::update(&mut panel.model, message)
+                .into_iter()
+                .any(|effect| {
+                    matches!(effect,
+                    crate::update::Effect::ActivateWorkspace { epoch, generation, indicator, action: id }
+                        if epoch == self.connection.connection_epoch()
+                            && generation == action.target_generation
+                            && indicator == action.target_id
+                            && id == action.action_id)
+                })
+        } else {
+            false
+        };
+        self.send(ShellContentRecord::ActionAck(ContentActionAck {
+            grant: action.grant,
+            output: action.output,
+            candidate_generation: action.candidate_generation,
+            presentation_epoch: action.presentation_epoch,
+            interaction_generation: action.interaction_generation,
+            allocation: action.allocation,
+            target_id: action.target_id,
+            target_generation: action.target_generation,
+            action_id: action.action_id,
+            event_id: action.event_id,
+            disposition: if accepted { 1 } else { 2 },
+        }))?;
+        if action.grant == self.limits.grant && action.event_id > self.activation_high_water {
+            self.activation_high_water = action.event_id;
+        }
+        if !accepted {
+            return Ok(());
+        }
         let transaction = self.transaction()?;
         self.connection
-            .send_content(
+            .send_indicator_activation(
                 transaction,
-                &ShellContentRecord::ResourceBegin(ContentResourceBegin {
-                    grant: self.limits.grant,
-                    resource,
-                    width_px: pixels.width(),
-                    height_px: pixels.height(),
-                    rendered_scale_numerator: self.panels[panel].allocation.scale_numerator,
-                    rendered_scale_denominator: self.panels[panel].allocation.scale_denominator,
-                    pixel_format: 1,
-                    chunk_count,
-                    total_bytes: pixels.bytes().len() as u64,
-                }),
+                &ShellIndicatorActivation {
+                    connection_epoch: self.connection.connection_epoch(),
+                    snapshot_generation: action.target_generation,
+                    output: sophia_protocol::OutputId::from_raw(action.output.id),
+                    indicator: action.target_id,
+                    action: action.action_id,
+                    event_id: action.event_id,
+                },
             )
-            .map_err(|error| format!("resource begin failed: {error}"))?;
-        self.wait_resource_status(resource, 1)?;
-        for chunk in pixels.chunks(self.limits.max_frame_payload, self.limits.max_chunk_bytes)? {
-            self.connection
-                .send_content(
-                    transaction,
-                    &ShellContentRecord::ResourceChunk(ContentResourceChunk {
-                        grant: self.limits.grant,
-                        resource,
-                        ordinal: chunk.ordinal,
-                        offset: chunk.offset,
-                        bytes: chunk.bytes.to_vec(),
-                    }),
-                )
-                .map_err(|error| format!("resource chunk failed: {error}"))?;
-        }
-        self.connection
-            .send_content(
-                transaction,
-                &ShellContentRecord::ResourceEnd(ContentResourceEnd {
-                    grant: self.limits.grant,
-                    resource,
-                    total_bytes: pixels.bytes().len() as u64,
-                    chunk_count,
-                }),
-            )
-            .map_err(|error| format!("resource end failed: {error}"))?;
-        self.wait_resource_status(resource, RESOURCE_ACCEPTED)
-    }
-
-    fn wait_resource_status(
-        &mut self,
-        resource: ContentResourceId,
-        expected: u16,
-    ) -> Result<(), String> {
-        loop {
-            if let ShellContentRecord::ResourceStatus(status) = self.wait_record()?
-                && status.resource == resource
-            {
-                if status.status == expected && status.reason == ContentReason::None as u16 {
-                    return Ok(());
-                }
-                if status.reason != ContentReason::None as u16 || status.status >= 3 {
-                    return Err(format!("resource was rejected: {}", status.reason));
-                }
-            }
-        }
-    }
-
-    fn wait_permit(
-        &mut self,
-        output: sophia_protocol::ContentOutputId,
-        demand_id: u64,
-    ) -> Result<ContentFramePermit, String> {
-        loop {
-            if let ShellContentRecord::FramePermit(permit) = self.wait_record()?
-                && permit.output == output
-                && permit.demand_id == demand_id
-            {
-                if permit.state == PERMIT_GRANTED && permit.reason == ContentReason::None as u16 {
-                    return Ok(permit);
-                }
-                return Err(format!("frame demand was refused: {}", permit.reason));
-            }
-        }
-    }
-
-    fn submit_candidate(
-        &mut self,
-        panel_index: usize,
-        resource: ContentResourceId,
-        candidate: u64,
-        permit: ContentFramePermit,
-    ) -> Result<(), String> {
-        let panel = &self.panels[panel_index];
-        let reservation_extent = match self.config.position {
-            Position::Top | Position::Bottom => panel.allocation.pixel.height,
-            Position::Left | Position::Right => panel.allocation.pixel.width,
-        };
-        let surface = ContentSurface {
-            allocation: panel.allocation.allocation,
-            scale_generation: panel.allocation.scale_generation,
-            role: PANEL_ROLE,
-            edge: edge(self.config.position),
-            margins: panel.allocation.margins,
-            reservation_extent,
-            parent_surface_index: u16::MAX,
-            anchor_parent_rect: ContentPixelRect::default(),
-        };
-        let begin = ShellContentRecord::CandidateBegin(ContentCandidateBegin {
-            grant: self.limits.grant,
-            candidate_generation: candidate,
-            output: panel.output.output,
-            facts_generation: self.facts.facts_generation,
-            pacing_permit: permit.permit_id,
-            interaction_generation: candidate,
-            surface_count: 1,
-            placement_count: 1,
-            target_count: 0,
-        });
-        let chunk = ShellContentRecord::CandidateChunk(ContentCandidateChunk {
-            grant: self.limits.grant,
-            candidate_generation: candidate,
-            chunk_ordinal: 0,
-            surfaces: vec![surface],
-            placements: vec![ContentPlacement {
-                resource,
-                surface_index: 0,
-                destination_x_px: 0,
-                destination_y_px: 0,
-            }],
-            targets: Vec::new(),
-        });
-        let end = ShellContentRecord::CandidateEnd(ContentCandidateEnd {
-            grant: self.limits.grant,
-            candidate_generation: candidate,
-            surface_count: 1,
-            placement_count: 1,
-            target_count: 0,
-        });
-        for record in [begin, chunk, end] {
-            self.send(record)?;
-        }
+            .map_err(|error| format!("indicator activation send failed: {error}"))?;
+        self.pending_activation_events.insert(action.event_id);
         Ok(())
-    }
-
-    fn wait_presented(
-        &mut self,
-        output: sophia_protocol::ContentOutputId,
-        candidate: u64,
-    ) -> Result<(), String> {
-        loop {
-            if let ShellContentRecord::CandidateOutcome(outcome) = self.wait_record()?
-                && outcome.output == output
-                && outcome.candidate_generation == candidate
-            {
-                if outcome.kind == CANDIDATE_PRESENTED
-                    && outcome.reason == ContentReason::None as u16
-                    && outcome.presentation_epoch != 0
-                {
-                    return Ok(());
-                }
-                if outcome.kind == CANDIDATE_REJECTED {
-                    return Err(format!(
-                        "content candidate was rejected: {}",
-                        outcome.reason
-                    ));
-                }
-            }
-        }
-    }
-
-    fn wait_released(&mut self, resource: ContentResourceId) -> Result<(), String> {
-        loop {
-            if let ShellContentRecord::ResourceReleased(released) = self.wait_record()?
-                && released.resource == resource
-            {
-                return if released.reason == ContentReason::None as u16 {
-                    Ok(())
-                } else {
-                    Err(format!("resource release failed: {}", released.reason))
-                };
-            }
-        }
     }
 
     fn wait_record(&mut self) -> Result<ShellContentRecord, String> {

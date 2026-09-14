@@ -209,3 +209,36 @@ fn actual_widget_click_emits_a_message_before_the_reducer_changes_state() {
         "queue saturation must be visible"
     );
 }
+
+#[test]
+fn workspace_targets_come_from_the_same_masonry_layout_as_pixels() {
+    let model = support::model();
+    let expected = model
+        .workspaces
+        .entries
+        .iter()
+        .filter(|entry| entry.output == model.output && entry.action.is_some())
+        .count();
+    let mut driver = PreviewDriver::new(model, 1280, 24, 1.0, false).unwrap();
+    let (scene, targets) = driver.scene_and_targets();
+    assert_eq!((scene.width, scene.height), (1280, 24));
+    assert_eq!(targets.len(), expected);
+    assert!(targets.iter().all(|target| {
+        target.x >= 0
+            && target.y >= 0
+            && target.width > 0
+            && target.height > 0
+            && target.x as u32 + target.width <= scene.width
+            && target.y as u32 + target.height <= scene.height
+    }));
+    for pair in targets.windows(2) {
+        let left = &pair[0];
+        let right = &pair[1];
+        assert!(left.x as u32 + left.width <= right.x as u32);
+    }
+    assert!(targets.iter().all(|target| matches!(
+        target.message,
+        Msg::ActivateWorkspace { indicator, action, .. }
+            if indicator == target.indicator && action == target.action
+    )));
+}

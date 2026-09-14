@@ -3,7 +3,7 @@
 mod driver;
 mod views;
 
-pub use driver::{PreviewDriver, PreviewScene};
+pub use driver::{ContentTargetLayout, PreviewDriver, PreviewScene};
 pub use views::{UiState, calendar_view, panel_view};
 
 /// Bundled font bytes, explicitly registered without system font discovery.

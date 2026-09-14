@@ -2,8 +2,7 @@
 
 use super::{GpuAdmissionEvidence, GpuGrant, GpuPreview};
 use crate::model::Model;
-use crate::protocol::ContentPixels;
-use crate::service::ContentRenderer;
+use crate::service::{ContentRenderer, RenderedContent};
 use crate::ui::PreviewDriver;
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::time::{Duration, Instant};
@@ -20,7 +19,7 @@ struct RenderJob {
 /// Capacity-one renderer executor. The worker alone owns Vello and wgpu.
 pub struct RendererWorker {
     requests: SyncSender<RenderJob>,
-    completions: Receiver<Result<ContentPixels, String>>,
+    completions: Receiver<Result<RenderedContent, String>>,
     submitted_at: Option<Instant>,
     timeout: Duration,
 }
@@ -57,7 +56,12 @@ impl RendererWorker {
                 while let Ok(job) = incoming.recv() {
                     let result =
                         PreviewDriver::new(job.model, job.width, job.height, job.scale, false)
-                            .and_then(|mut driver| renderer.readback_content(&mut driver.scene()));
+                            .and_then(|mut driver| {
+                                let (mut scene, targets) = driver.scene_and_targets();
+                                renderer
+                                    .readback_content(&mut scene)
+                                    .map(|pixels| RenderedContent { pixels, targets })
+                            });
                     if completed.send(result).is_err() {
                         break;
                     }
@@ -99,7 +103,7 @@ impl ContentRenderer for RendererWorker {
         }
     }
 
-    fn poll(&mut self) -> Result<Option<ContentPixels>, String> {
+    fn poll(&mut self) -> Result<Option<RenderedContent>, String> {
         let Some(started) = self.submitted_at else {
             return Err("GPU worker has no render job to poll".into());
         };

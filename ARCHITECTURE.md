@@ -2,8 +2,8 @@
 
 **Role:** intended client architecture and implementation constraints.
 **Status:** client design with a tested local Minimal UI, persistent content
-lifecycle, and implemented direct-GPU grant consumer; semantic input and native
-GPU acceptance remain incomplete. See
+lifecycle, implemented direct-GPU grant consumer, and exact presented workspace
+actions; popouts and native GPU/input acceptance remain incomplete. See
 [implementation evidence](docs/minimal-port.md).
 
 Implementation must follow the [style guide](docs/style-guide.md), including
@@ -196,8 +196,11 @@ follow the negotiated rejection/acknowledgement rules rather than being replayed
 into a replacement tree or connection.
 
 The panel subset of the following sequence is implemented and exercised against
-a real-socket protocol fixture. Popout actions and native acceptance remain
-open. Rendering is scheduled under negotiated pacing; local GPU completion is
+a real-socket protocol fixture. Each button target comes from the same Masonry
+layout as its pixels and retains the exact TEA message until Sophia returns the
+presented target action. Lom acknowledges that action, reduces the retained
+message, and emits the already-authorized indicator activation once. Popout
+actions and native acceptance remain open. Rendering is scheduled under negotiated pacing; local GPU completion is
 not presentation.
 
 ```mermaid

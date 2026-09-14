@@ -137,6 +137,14 @@ old-epoch events cannot activate replacement meaning. Prepared does not make a
 target active. Cancellation and timeout must settle without keeping a widget
 pressed forever, and driver work must not block the response.
 
+Implemented in the t004 source tranche: Lom requests the discrete-input and
+indicator-activation capabilities, derives non-overlapping physical targets and
+retained TEA messages from the same Masonry layout as each frame, and runs a
+nonblocking resource/candidate presentation ledger. An exact content action is
+acknowledged before the retained message is reduced and its authorized
+indicator action is emitted. Real-socket tests cover that chain. Native pointer
+selection and observation remain t008 evidence.
+
 Exit: reducer, model/trace mappings where required, and real private-socket
 tests prove one valid activation plus all refusal and teardown cases. Keep
 backend-queued, socket-routed and client-observed outcomes distinct. Native

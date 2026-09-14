@@ -23,7 +23,10 @@ fn mailbox_allows_only_one_job_and_reports_one_completion() {
     let job = incoming.try_recv().unwrap();
     assert_eq!((job.width, job.height, job.scale), (8, 48, 2.0));
     completed
-        .send(ContentPixels::from_rgba8(8, 48, vec![0; 1536]))
+        .send(Ok(RenderedContent {
+            pixels: crate::protocol::ContentPixels::from_rgba8(8, 48, vec![0; 1536]).unwrap(),
+            targets: Vec::new(),
+        }))
         .unwrap();
     assert!(worker.poll().unwrap().is_some());
     assert!(worker.poll().is_err());
