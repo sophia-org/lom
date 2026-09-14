@@ -233,7 +233,7 @@ fn candidate_generations_are_unique_across_outputs() {
     let mut service =
         ShellService::new(connection, config, theme, 48, ImmediateRenderer(None)).unwrap();
     let mut presented = 0;
-    while presented < 2 {
+    while presented < 4 {
         presented += service.step().unwrap();
     }
     done_sender.send(()).unwrap();
@@ -242,6 +242,9 @@ fn candidate_generations_are_unique_across_outputs() {
 }
 
 fn serve_two_outputs(mut stream: UnixStream, done: std::sync::mpsc::Receiver<()>) {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
     let hello = read_frame(&mut stream);
     let ShellV1ClientHello {
         minimum_revision,
@@ -334,9 +337,44 @@ fn serve_two_outputs(mut stream: UnixStream, done: std::sync::mpsc::Receiver<()>
             }),
         );
     }
-    serve_frame(&mut stream, OUTPUT, allocations[0], 1, 22, 31, 0);
-    serve_frame(&mut stream, SECOND_OUTPUT, allocations[1], 2, 23, 32, 0);
+    let first = serve_frame(&mut stream, OUTPUT, allocations[0], 1, 22, 31, 0);
+    let second = serve_frame(&mut stream, SECOND_OUTPUT, allocations[1], 2, 23, 32, 0);
+    std::thread::sleep(Duration::from_millis(50));
+    for frame in encode_shell_indicator_snapshot(
+        TransactionId::from_raw(70),
+        &ShellIndicatorSnapshot {
+            connection_epoch: GRANT.connection_epoch,
+            generation: 1,
+            active_output: None,
+            statuses: Vec::new(),
+            indicators: Vec::new(),
+        },
+    )
+    .unwrap()
+    {
+        stream.write_all(&frame).unwrap();
+    }
+    serve_frame(&mut stream, OUTPUT, allocations[0], 3, 24, 33, 0);
+    release_retired(&mut stream, first);
+    serve_frame(&mut stream, SECOND_OUTPUT, allocations[1], 4, 25, 34, 0);
+    release_retired(&mut stream, second);
     done.recv_timeout(Duration::from_secs(2)).unwrap();
+}
+
+fn release_retired(stream: &mut UnixStream, expected: ContentResourceId) {
+    let (transaction, ShellContentRecord::ResourceRetire(retire)) = receive(stream) else {
+        panic!("expected resource retirement after replacement presentation");
+    };
+    assert_eq!(retire.resource, expected);
+    send_tx(
+        stream,
+        transaction,
+        ShellContentRecord::ResourceReleased(sophia_protocol::ContentResourceReleased {
+            grant: GRANT,
+            resource: expected,
+            reason: ContentReason::None as u16,
+        }),
+    );
 }
 
 fn serve_one(
