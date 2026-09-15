@@ -297,10 +297,31 @@ to the existing `lom_panel_candidate` record. Its indicator generation remains
 the render job's captured revision, not the latest snapshot at logging time.
 Sophia's new workload verifier joins that origin to host-owned action, policy
 and native completion records; client output cannot replace host evidence.
-This is evidence preparation only. The 60-second/40-action verifier's fixture
-budgets are not numerical native acceptance, and its current scope does not
-cover memory plateau, teardown credits or the full attended launcher. No GPU,
-native run, install or t009 closure follows from the diagnostic change.
+This diagnostic remains evidence preparation, not native acceptance. Sophia
+`82342681` now wires the operator-only `lom-test` launcher to a 90-second normal
+exit with a 110-second failure watchdog. Its checked-in candidate budget declares
+10 seconds of warmup, 40 state-changing workspace clicks (20 per output) within
+60 seconds, validated ACK p95/max 50/100 ms and exact native retirement p95/max
+150/300 ms. Those are predeclared workload gates, not recovered historical
+numerical approval or driver guarantees.
+
+The launcher hashes the copied budget, profiles and exact binaries before GPU
+preflight, refuses changed inputs and existing evidence directories, and runs
+strict native-health/recovery plus causal workload verification after normal
+exit. Host samples bracket the workload on the existing bounded five-second
+cadence. Protocol/storage checks bound four reusable resource slots, bytes by
+twice the two exact panel sizes, warmed resource-ID growth, candidate/allocation
+and queue ownership. The final same-grant record must confirm current renderer
+workers joined and every actual content/transport credit is zero. These are not
+RSS or GPU residency measurements; the retained-cache 1000-cycle controls and
+broader daily-driver matrix retain their separate scopes.
+
+This next attended test covers stable two-output workspace/clock interaction
+and normal cleanup, not calendar/descriptor/topology acceptance or all of t008
+and t009. No native run, install or task closure is inferred from the launcher
+and verifier controls. The existing `lom-test` command is the foreground entry
+on tty4 after ending the graphical session; the operator must still confirm
+appearance, placement and pointer behavior and retain any failure unchanged.
 
 ### t010
 
