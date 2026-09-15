@@ -411,9 +411,12 @@ impl<R: ContentRenderer> ShellService<R> {
         let pixels = &pending.content.pixels;
         let indicator_generation = pending.indicator_revision;
         println!(
-            "lom_panel_candidate schema=1 status=presented output={} candidate_generation={} indicator_generation={} width={} height={} bytes={} checksum={:016x}",
+            "lom_panel_candidate schema=1 status=presented connection_epoch={} content_grant_epoch={} output={} candidate_generation={} presentation_epoch={} indicator_generation={} width={} height={} bytes={} checksum={:016x}",
+            self.limits.grant.connection_epoch,
+            self.limits.grant.content_grant_epoch,
             panel.output.output.id,
             pending.candidate,
+            pending.presentation_epoch,
             indicator_generation,
             pixels.width(),
             pixels.height(),

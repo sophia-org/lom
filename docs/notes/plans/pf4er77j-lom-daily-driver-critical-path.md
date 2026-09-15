@@ -291,6 +291,17 @@ no sustained storage growth or lost accepted obligation, and failures/recovery
 have evidence. Device incidents remain visible; direct GPU mode promises no
 hard driver VRAM isolation. Fixes require a new exact-candidate acceptance record.
 
+
+The causal-evidence follow-up adds exact connection/grant and presentation epoch
+to the existing `lom_panel_candidate` record. Its indicator generation remains
+the render job's captured revision, not the latest snapshot at logging time.
+Sophia's new workload verifier joins that origin to host-owned action, policy
+and native completion records; client output cannot replace host evidence.
+This is evidence preparation only. The 60-second/40-action verifier's fixture
+budgets are not numerical native acceptance, and its current scope does not
+cover memory plateau, teardown credits or the full attended launcher. No GPU,
+native run, install or t009 closure follows from the diagnostic change.
+
 ### t010
 
 Promote only after t003 through t009 and t020 meet their exits and Sophia t081
