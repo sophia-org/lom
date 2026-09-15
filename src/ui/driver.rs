@@ -129,6 +129,17 @@ impl PreviewDriver {
     /// Apply an observation and reconcile the existing tree. Effects are returned, never executed.
     pub fn apply(&mut self, message: Msg) -> Vec<Effect> {
         let effects = update(&mut self.state.model, message);
+        self.rebuild();
+        effects
+    }
+
+    /// Reconcile a passive runtime snapshot while retaining widgets and local UI state.
+    pub fn reconcile_model(&mut self, model: Model) {
+        self.state.model = model;
+        self.rebuild();
+    }
+
+    fn rebuild(&mut self) {
         let view = make_view(
             &self.state.model,
             self.width,
@@ -144,7 +155,6 @@ impl PreviewDriver {
             &mut self.state,
         );
         self.view = view;
-        effects
     }
     /// Produce a bounded, clipped physical scene using actual Masonry paint output.
     pub fn scene(&mut self) -> PreviewScene {
@@ -316,3 +326,7 @@ fn trim_snapped_overlap(targets: &mut [ContentTargetLayout], vertical: bool) {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/support/retained_driver.rs"]
+mod tests;

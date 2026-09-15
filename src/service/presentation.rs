@@ -2,25 +2,34 @@ use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PresentationPhase {
+    ResourceUnqueued,
     ResourceBegun,
+    ResourceUploading,
     ResourceUploaded,
+    ResourceAccepted,
     DemandSent,
+    PermitGranted,
     CandidateSubmitted,
-    ResourceRetiring,
+    RetireNeeded,
+    Presented,
 }
 
 pub(super) struct PendingPresentation {
-    panel: usize,
+    pub(super) panel: usize,
     slot_index: usize,
     resource: ContentResourceId,
     old: Option<ContentResourceId>,
     candidate: u64,
     demand_id: u64,
     upload_transaction: TransactionId,
+    next_chunk: u32,
+    permit: Option<ContentFramePermit>,
     content: RenderedContent,
     phase: PresentationPhase,
     deadline: Instant,
     presentation_epoch: u64,
+    indicator_revision: u64,
+    model: Model,
 }
 
 impl<R: ContentRenderer> ShellService<R> {
@@ -29,7 +38,11 @@ impl<R: ContentRenderer> ShellService<R> {
         panel: usize,
         content: RenderedContent,
     ) -> Result<(), String> {
-        if self.presentation.is_some() {
+        if self
+            .presentations
+            .iter()
+            .any(|pending| pending.panel == panel)
+        {
             return Err("a content presentation is already in flight".into());
         }
         let (slot_index, slot, old) = {
@@ -49,75 +62,112 @@ impl<R: ContentRenderer> ShellService<R> {
             id: slot.id,
             generation: slot.generation,
         });
-        let candidate = self.next_candidate_generation;
-        let demand_id = self.next_demand;
-        self.next_demand = demand_id
-            .checked_add(1)
-            .ok_or("frame demand identity exhausted")?;
-        let upload_transaction = self.transaction()?;
+        let candidate = 0;
         let pixels = &content.pixels;
-        let chunk_count = u32::try_from(
-            pixels
-                .chunks(self.limits.max_frame_payload, self.limits.max_chunk_bytes)?
-                .count(),
-        )
-        .map_err(|_| "resource chunk count exceeds the protocol")?;
-        let allocation = &self.panels[panel].allocation;
-        self.connection
-            .send_content(
-                upload_transaction,
-                &ShellContentRecord::ResourceBegin(ContentResourceBegin {
-                    grant: self.limits.grant,
-                    resource,
-                    width_px: pixels.width(),
-                    height_px: pixels.height(),
-                    rendered_scale_numerator: allocation.scale_numerator,
-                    rendered_scale_denominator: allocation.scale_denominator,
-                    pixel_format: 1,
-                    chunk_count,
-                    total_bytes: pixels.bytes().len() as u64,
-                }),
-            )
-            .map_err(|error| format!("resource begin failed: {error}"))?;
-        self.presentation = Some(PendingPresentation {
+        self.panels[panel].resources[slot_index] = ResourceSlot {
+            id: slot.id,
+            generation: slot.generation,
+            bytes: pixels.bytes().len() as u64,
+            state: ResourceState::Staging,
+            release_deadline: None,
+        };
+        let upload_transaction = self.transaction()?;
+        self.presentations.push(PendingPresentation {
             panel,
             slot_index,
             resource,
             old,
             candidate,
-            demand_id,
+            demand_id: 0,
             upload_transaction,
+            next_chunk: 0,
+            permit: None,
             content,
-            phase: PresentationPhase::ResourceBegun,
+            phase: PresentationPhase::ResourceUnqueued,
             deadline: Instant::now() + RESPONSE_TIMEOUT,
             presentation_epoch: 0,
+            indicator_revision: self.rendering_revision,
+            model: self
+                .rendering_model
+                .take()
+                .ok_or("render completion lost its originating model")?,
         });
         Ok(())
     }
 
-    pub(super) fn advance_presentation(&mut self) -> Result<bool, String> {
-        let Some(mut pending) = self.presentation.take() else {
-            return Ok(false);
-        };
+    pub(super) fn advance_presentation(
+        &mut self,
+        mut pending: PendingPresentation,
+    ) -> Result<bool, String> {
         if Instant::now() >= pending.deadline {
             return Err(format!("content {:?} response timed out", pending.phase));
         }
         match pending.phase {
+            PresentationPhase::ResourceUnqueued => self.advance_resource_start(&mut pending)?,
+            PresentationPhase::ResourceAccepted => self.advance_demand_enqueue(&mut pending)?,
+            PresentationPhase::PermitGranted => self.advance_candidate_enqueue(&mut pending)?,
+            PresentationPhase::RetireNeeded => self.advance_retire_enqueue(&mut pending)?,
             PresentationPhase::ResourceBegun => self.advance_resource_begin(&mut pending)?,
+            PresentationPhase::ResourceUploading => self.advance_resource_chunks(&mut pending)?,
             PresentationPhase::ResourceUploaded => self.advance_resource_upload(&mut pending)?,
             PresentationPhase::DemandSent => self.advance_demand(&mut pending)?,
             PresentationPhase::CandidateSubmitted => self.advance_candidate(&mut pending)?,
-            PresentationPhase::ResourceRetiring => self.advance_retirement(&mut pending)?,
+            PresentationPhase::Presented => false,
         };
-        if pending.phase == PresentationPhase::ResourceRetiring
-            && pending.old.is_none()
-            && pending.presentation_epoch != 0
-        {
+        if pending.phase == PresentationPhase::Presented {
             self.finish_presentation(pending)?;
             return Ok(true);
         }
-        self.presentation = Some(pending);
+        self.presentations.push(pending);
         Ok(false)
+    }
+
+    fn advance_resource_start(
+        &mut self,
+        pending: &mut PendingPresentation,
+    ) -> Result<bool, String> {
+        let pixels = &pending.content.pixels;
+        let resource = ContentResourceId {
+            id: if pending.resource.id == 0 {
+                self.next_resource
+            } else {
+                pending.resource.id
+            },
+            generation: pending.resource.generation,
+        };
+        let allocation = &self.panels[pending.panel].allocation;
+        let begin = ShellContentRecord::ResourceBegin(ContentResourceBegin {
+            grant: self.limits.grant,
+            resource,
+            width_px: pixels.width(),
+            height_px: pixels.height(),
+            rendered_scale_numerator: allocation.scale_numerator,
+            rendered_scale_denominator: allocation.scale_denominator,
+            pixel_format: 1,
+            chunk_count: pixels
+                .chunks(self.limits.max_frame_payload, self.limits.max_chunk_bytes)?
+                .count() as u32,
+            total_bytes: pixels.bytes().len() as u64,
+        });
+        match self
+            .connection
+            .enqueue_content(pending.upload_transaction, &begin)
+        {
+            Ok(()) => {}
+            Err(sophia_shell_client::ShellClientError::QueueSaturated) => return Ok(false),
+            Err(error) => return Err(format!("resource begin failed: {error}")),
+        }
+        if pending.resource.id == 0 {
+            self.next_resource = self
+                .next_resource
+                .checked_add(1)
+                .ok_or("resource identity exhausted")?;
+        }
+        pending.resource = resource;
+        self.panels[pending.panel].resources[pending.slot_index].id = resource.id;
+        pending.phase = PresentationPhase::ResourceBegun;
+        pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
+        Ok(true)
     }
 
     fn advance_resource_begin(
@@ -132,37 +182,58 @@ impl<R: ContentRenderer> ShellService<R> {
         if status.status != 1 || status.reason != ContentReason::None as u16 {
             return Err(format!("resource begin was rejected: {}", status.reason));
         }
+        pending.phase = PresentationPhase::ResourceUploading;
+        self.advance_resource_chunks(pending)
+    }
+
+    fn advance_resource_chunks(
+        &mut self,
+        pending: &mut PendingPresentation,
+    ) -> Result<bool, String> {
         let pixels = &pending.content.pixels;
-        let chunks = pixels
+        let chunk_count = pixels
             .chunks(self.limits.max_frame_payload, self.limits.max_chunk_bytes)?
-            .collect::<Vec<_>>();
-        let chunk_count =
-            u32::try_from(chunks.len()).map_err(|_| "resource chunk count overflow")?;
-        for chunk in chunks {
-            self.connection
-                .send_content(
-                    pending.upload_transaction,
-                    &ShellContentRecord::ResourceChunk(ContentResourceChunk {
-                        grant: self.limits.grant,
-                        resource: pending.resource,
-                        ordinal: chunk.ordinal,
-                        offset: chunk.offset,
-                        bytes: chunk.bytes.to_vec(),
-                    }),
-                )
-                .map_err(|error| format!("resource chunk failed: {error}"))?;
-        }
-        self.connection
-            .send_content(
+            .count() as u32;
+        // At most four whole-row chunks (under 256 KiB) per output turn.
+        for chunk in pixels
+            .chunks(self.limits.max_frame_payload, self.limits.max_chunk_bytes)?
+            .skip(pending.next_chunk as usize)
+            .take(self.upload_chunks_left)
+        {
+            match self.connection.enqueue_content(
                 pending.upload_transaction,
-                &ShellContentRecord::ResourceEnd(ContentResourceEnd {
+                &ShellContentRecord::ResourceChunk(ContentResourceChunk {
                     grant: self.limits.grant,
                     resource: pending.resource,
-                    total_bytes: pixels.bytes().len() as u64,
-                    chunk_count,
+                    ordinal: chunk.ordinal,
+                    offset: chunk.offset,
+                    bytes: chunk.bytes.to_vec(),
                 }),
-            )
-            .map_err(|error| format!("resource end failed: {error}"))?;
+            ) {
+                Ok(()) => {
+                    pending.next_chunk += 1;
+                    self.upload_chunks_left -= 1;
+                }
+                Err(sophia_shell_client::ShellClientError::QueueSaturated) => return Ok(false),
+                Err(error) => return Err(format!("resource chunk failed: {error}")),
+            }
+        }
+        if pending.next_chunk != chunk_count {
+            return Ok(false);
+        }
+        match self.connection.enqueue_content(
+            pending.upload_transaction,
+            &ShellContentRecord::ResourceEnd(ContentResourceEnd {
+                grant: self.limits.grant,
+                resource: pending.resource,
+                total_bytes: pixels.bytes().len() as u64,
+                chunk_count,
+            }),
+        ) {
+            Ok(()) => {}
+            Err(sophia_shell_client::ShellClientError::QueueSaturated) => return Ok(false),
+            Err(error) => return Err(format!("resource end failed: {error}")),
+        }
         pending.phase = PresentationPhase::ResourceUploaded;
         pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
         Ok(true)
@@ -180,14 +251,34 @@ impl<R: ContentRenderer> ShellService<R> {
         if status.status != RESOURCE_ACCEPTED || status.reason != ContentReason::None as u16 {
             return Err(format!("resource was rejected: {}", status.reason));
         }
+        self.panels[pending.panel].resources[pending.slot_index].state = ResourceState::Resident;
+        pending.phase = PresentationPhase::ResourceAccepted;
+        self.advance_demand_enqueue(pending)
+    }
+
+    fn advance_demand_enqueue(
+        &mut self,
+        pending: &mut PendingPresentation,
+    ) -> Result<bool, String> {
         let panel = &self.panels[pending.panel];
-        self.send(ShellContentRecord::FrameDemand(ContentFrameDemand {
+        let record = ShellContentRecord::FrameDemand(ContentFrameDemand {
             grant: self.limits.grant,
             output: panel.output.output,
             allocation: panel.allocation.allocation,
-            demand_id: pending.demand_id,
+            demand_id: self.next_demand,
             reason: 1,
-        }))?;
+        });
+        let transaction = self.transaction()?;
+        match self.connection.enqueue_content(transaction, &record) {
+            Ok(()) => {}
+            Err(sophia_shell_client::ShellClientError::QueueSaturated) => return Ok(false),
+            Err(error) => return Err(format!("frame demand failed: {error}")),
+        }
+        pending.demand_id = self.next_demand;
+        self.next_demand = self
+            .next_demand
+            .checked_add(1)
+            .ok_or("demand identity exhausted")?;
         pending.phase = PresentationPhase::DemandSent;
         pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
         Ok(true)
@@ -203,16 +294,56 @@ impl<R: ContentRenderer> ShellService<R> {
         if permit.state != PERMIT_GRANTED || permit.reason != ContentReason::None as u16 {
             return Err(format!("frame demand was refused: {}", permit.reason));
         }
-        self.submit_candidate(
+        pending.permit = Some(permit);
+        pending.phase = PresentationPhase::PermitGranted;
+        self.advance_candidate_enqueue(pending)
+    }
+
+    fn advance_candidate_enqueue(
+        &mut self,
+        pending: &mut PendingPresentation,
+    ) -> Result<bool, String> {
+        let candidate = self.next_candidate_generation;
+        if !self.submit_candidate(
             pending.panel,
             pending.resource,
-            pending.candidate,
-            permit,
+            candidate,
+            pending.permit.clone().ok_or("candidate lost its permit")?,
             &pending.content.targets,
-        )?;
+        )? {
+            return Ok(false);
+        }
+        pending.candidate = candidate;
+        pending.permit = None;
+        self.next_candidate_generation = candidate
+            .checked_add(1)
+            .ok_or("candidate generation exhausted")?;
         pending.phase = PresentationPhase::CandidateSubmitted;
         pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
         Ok(true)
+    }
+
+    pub(super) fn install_presented_targets(
+        &mut self,
+        outcome: &sophia_protocol::ContentCandidateOutcome,
+    ) -> Result<(), String> {
+        let pending = self
+            .presentations
+            .iter()
+            .find(|pending| pending.candidate == outcome.candidate_generation)
+            .ok_or("Presented has no pending candidate")?;
+        if pending.candidate != outcome.candidate_generation
+            || self.panels[pending.panel].output.output != outcome.output
+        {
+            return Err("Presented names a different pending candidate".into());
+        }
+        self.panels[pending.panel].presented = Some(PresentedPanel {
+            model: pending.model.clone(),
+            candidate_generation: pending.candidate,
+            presentation_epoch: outcome.presentation_epoch,
+            targets: pending.content.targets.clone(),
+        });
+        Ok(())
     }
 
     fn advance_candidate(&mut self, pending: &mut PendingPresentation) -> Result<bool, String> {
@@ -235,49 +366,50 @@ impl<R: ContentRenderer> ShellService<R> {
             return Err("presented content candidate carried an invalid outcome".into());
         }
         pending.presentation_epoch = outcome.presentation_epoch;
-        if let Some(old) = pending.old {
-            self.send(ShellContentRecord::ResourceRetire(ContentResourceRetire {
-                grant: self.limits.grant,
-                resource: old,
-            }))?;
-            pending.phase = PresentationPhase::ResourceRetiring;
-            pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
-            return Ok(true);
-        }
-        pending.phase = PresentationPhase::ResourceRetiring;
-        Ok(true)
+        pending.phase = PresentationPhase::RetireNeeded;
+        self.advance_retire_enqueue(pending)
     }
 
-    fn advance_retirement(&mut self, pending: &mut PendingPresentation) -> Result<bool, String> {
-        let Some(old) = pending.old else {
-            return Ok(false);
-        };
-        let Some(ShellContentRecord::ResourceReleased(released)) = self.take_pending(|record| {
-            matches!(record, ShellContentRecord::ResourceReleased(value) if value.resource == old)
-        }) else {
-            return Ok(false);
-        };
-        if released.reason != ContentReason::None as u16 {
-            return Err(format!("resource release failed: {}", released.reason));
+    fn advance_retire_enqueue(
+        &mut self,
+        pending: &mut PendingPresentation,
+    ) -> Result<bool, String> {
+        if let Some(old) = pending.old {
+            let old_bytes = self.panels[pending.panel].resources[1 - pending.slot_index].bytes;
+            let retiring: u64 = self
+                .panels
+                .iter()
+                .flat_map(|panel| &panel.resources)
+                .filter(|slot| slot.state == ResourceState::Retiring)
+                .map(|slot| slot.bytes)
+                .sum();
+            if retiring + old_bytes > self.limits.max_retiring_bytes {
+                return Ok(false);
+            }
+            let transaction = self.transaction()?;
+            match self.connection.enqueue_content(
+                transaction,
+                &ShellContentRecord::ResourceRetire(ContentResourceRetire {
+                    grant: self.limits.grant,
+                    resource: old,
+                }),
+            ) {
+                Ok(()) => {}
+                Err(sophia_shell_client::ShellClientError::QueueSaturated) => return Ok(false),
+                Err(error) => return Err(format!("resource retire failed: {error}")),
+            }
+            let slot = &mut self.panels[pending.panel].resources[1 - pending.slot_index];
+            slot.state = ResourceState::Retiring;
+            slot.release_deadline = Some(Instant::now() + RESPONSE_TIMEOUT);
         }
-        pending.old = None;
+        pending.phase = PresentationPhase::Presented;
         Ok(true)
     }
 
     fn finish_presentation(&mut self, pending: PendingPresentation) -> Result<(), String> {
         let panel = &mut self.panels[pending.panel];
-        if panel.current_slot.is_some() {
-            let old_index = 1 - pending.slot_index;
-            panel.resources[old_index].generation = panel.resources[old_index]
-                .generation
-                .checked_add(1)
-                .ok_or("resource generation exhausted")?;
-        }
         let pixels = &pending.content.pixels;
-        let indicator_generation = self
-            .latest_indicators
-            .as_ref()
-            .map_or(0, |snapshot| snapshot.generation);
+        let indicator_generation = pending.indicator_revision;
         println!(
             "lom_panel_candidate schema=1 status=presented output={} candidate_generation={} indicator_generation={} width={} height={} bytes={} checksum={:016x}",
             panel.output.output.id,
@@ -290,14 +422,11 @@ impl<R: ContentRenderer> ShellService<R> {
         );
         panel.current_slot = Some(pending.slot_index);
         panel.presented = Some(PresentedPanel {
+            model: pending.model,
             candidate_generation: pending.candidate,
             presentation_epoch: pending.presentation_epoch,
             targets: pending.content.targets,
         });
-        self.next_candidate_generation = pending
-            .candidate
-            .checked_add(1)
-            .ok_or("candidate generation exhausted")?;
         Ok(())
     }
 
@@ -305,8 +434,11 @@ impl<R: ContentRenderer> ShellService<R> {
         &mut self,
         predicate: impl Fn(&ShellContentRecord) -> bool,
     ) -> Option<ShellContentRecord> {
-        let at = self.pending_content.iter().position(predicate)?;
-        self.pending_content.remove(at)
+        let at = self
+            .pending_content
+            .iter()
+            .position(|(_, record)| predicate(record))?;
+        self.pending_content.remove(at).map(|(_, record)| record)
     }
 
     fn submit_candidate(
@@ -316,7 +448,7 @@ impl<R: ContentRenderer> ShellService<R> {
         candidate: u64,
         permit: ContentFramePermit,
         targets: &[ContentTargetLayout],
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let panel = &self.panels[panel_index];
         let reservation_extent = match self.config.position {
             Position::Top | Position::Bottom => panel.allocation.pixel.height,
@@ -379,9 +511,16 @@ impl<R: ContentRenderer> ShellService<R> {
             placement_count: 1,
             target_count,
         });
-        for record in [begin, chunk, end] {
-            self.send(record)?;
+        let transaction = self.transaction()?;
+        match self.connection.enqueue_candidate(
+            &mut self.lifecycle,
+            transaction,
+            &[begin, chunk, end],
+        ) {
+            Ok(()) => {}
+            Err(sophia_shell_client::ShellClientError::QueueSaturated) => return Ok(false),
+            Err(error) => return Err(format!("candidate outbox admission: {error}")),
         }
-        Ok(())
+        Ok(true)
     }
 }

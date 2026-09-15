@@ -1,6 +1,7 @@
 //! Persistent, display-independent Sophia content lifecycle.
 
 mod presentation;
+mod scheduler;
 use presentation::PendingPresentation;
 
 use crate::{
@@ -21,7 +22,7 @@ use sophia_protocol::{
     ShellIndicatorActivation, ShellIndicatorActivationStatus, ShellIndicatorSnapshot,
     TransactionId,
 };
-use sophia_shell_client::ShellConnection;
+use sophia_shell_client::{ContentActionDispatch, ContentLifecycle, ShellConnection};
 use std::{
     collections::{BTreeSet, VecDeque},
     time::{Duration, Instant, SystemTime},
@@ -46,10 +47,30 @@ pub struct RenderedContent {
     pub targets: Vec<ContentTargetLayout>,
 }
 
+/// Exact lifetime of one acknowledged allocation's retained UI host.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RenderIdentity {
+    /// Admitted connection and content grant.
+    pub grant: sophia_protocol::ContentGrant,
+    /// Logical output and its topology generation.
+    pub output: sophia_protocol::ContentOutputId,
+    /// Engine-owned allocation and generation.
+    pub allocation: ContentAllocationId,
+    /// Scale identity from the acknowledged allocation.
+    pub scale_generation: u64,
+}
+
 /// Produces one complete panel resource from passive application state.
 pub trait ContentRenderer {
     /// Queue exactly one render for the acknowledged physical allocation.
-    fn submit(&mut self, model: Model, width: u32, height: u32, scale: f64) -> Result<(), String>;
+    fn submit(
+        &mut self,
+        identity: RenderIdentity,
+        model: Model,
+        width: u32,
+        height: u32,
+        scale: f64,
+    ) -> Result<(), String>;
 
     /// Poll the sole in-flight render without blocking protocol ownership.
     fn poll(&mut self) -> Result<Option<RenderedContent>, String>;
@@ -59,6 +80,7 @@ struct Panel {
     output: ContentOutputFactsEntry,
     allocation: ContentAllocationResult,
     model: Model,
+    dirty: bool,
     current_slot: Option<usize>,
     presented: Option<PresentedPanel>,
     resources: [ResourceSlot; 2],
@@ -66,6 +88,7 @@ struct Panel {
 
 #[derive(Clone, Debug)]
 struct PresentedPanel {
+    model: Model,
     candidate_generation: u64,
     presentation_epoch: u64,
     targets: Vec<ContentTargetLayout>,
@@ -75,6 +98,17 @@ struct PresentedPanel {
 struct ResourceSlot {
     id: u64,
     generation: u64,
+    bytes: u64,
+    state: ResourceState,
+    release_deadline: Option<Instant>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ResourceState {
+    Free,
+    Staging,
+    Resident,
+    Retiring,
 }
 
 /// One persistent, display-independent Sophia content client.
@@ -92,15 +126,19 @@ pub struct ShellService<R> {
     next_transaction: u64,
     next_demand: u64,
     next_candidate_generation: u64,
-    dirty: bool,
+    next_resource: u64,
+    upload_chunks_left: usize,
     last_second: u64,
     latest_indicators: Option<ShellIndicatorSnapshot>,
-    pending_content: VecDeque<ShellContentRecord>,
+    pending_content: VecDeque<(TransactionId, ShellContentRecord)>,
+    lifecycle: ContentLifecycle,
+    rendering_revision: u64,
+    rendering_model: Option<Model>,
     activation_high_water: u64,
     pending_activation_events: BTreeSet<u64>,
-    presentation: Option<PendingPresentation>,
+    presentations: Vec<PendingPresentation>,
     rendering_panel: Option<usize>,
-    next_panel: Option<usize>,
+    next_panel: usize,
 }
 
 impl<R: ContentRenderer> ShellService<R> {
@@ -112,38 +150,53 @@ impl<R: ContentRenderer> ShellService<R> {
         allowance: u32,
         renderer: R,
     ) -> Result<Self, String> {
-        let ShellContentRecord::Limits(limits) = receive_content(&mut connection)? else {
+        let (_, ShellContentRecord::Limits(limits)) = receive_content(&mut connection)? else {
             return Err("first content record was not ContentLimits".into());
         };
         limits
             .validate()
             .map_err(|error| format!("invalid content limits: {error:?}"))?;
-        let ShellContentRecord::OutputFacts(facts) = receive_content(&mut connection)? else {
+        let (facts_transaction, ShellContentRecord::OutputFacts(facts)) =
+            receive_content(&mut connection)?
+        else {
             return Err("ContentLimits was not followed by ContentOutputFacts".into());
         };
         if facts.outputs.is_empty() {
             return Err("content service published no outputs".into());
         }
+        let pending_capacity = limits.max_pending_candidates_total as usize;
+        let mut lifecycle = ContentLifecycle::new(limits.clone())
+            .map_err(|error| format!("content lifecycle: {error:?}"))?;
+        lifecycle
+            .dispatch(
+                facts_transaction,
+                ShellContentRecord::OutputFacts(facts.clone()),
+            )
+            .map_err(|error| format!("initial output facts: {error:?}"))?;
         let mut service = Self {
             connection,
             config,
             theme,
             renderer,
+            lifecycle,
+            rendering_revision: 0,
+            rendering_model: None,
             limits,
             facts,
             panels: Vec::new(),
             next_transaction: 1,
             next_demand: 1,
             next_candidate_generation: 1,
-            dirty: true,
+            next_resource: 1,
+            upload_chunks_left: 4,
             last_second: unix_second(),
             latest_indicators: None,
             pending_content: VecDeque::new(),
             activation_high_water: 0,
             pending_activation_events: BTreeSet::new(),
-            presentation: None,
+            presentations: Vec::with_capacity(pending_capacity),
             rendering_panel: None,
-            next_panel: None,
+            next_panel: 0,
         };
         service.allocate_panels(allowance)?;
         Ok(service)
@@ -152,61 +205,7 @@ impl<R: ContentRenderer> ShellService<R> {
     /// Make one bounded observation turn and, when dirty, present one complete
     /// replacement on every output. Returns the number of outputs presented.
     pub fn step(&mut self) -> Result<usize, String> {
-        self.observe()?;
-        let second = unix_second();
-        if second != self.last_second {
-            self.last_second = second;
-            let now = observed_time();
-            let mut observed_clock = false;
-            for panel in &mut self.panels {
-                if panel
-                    .model
-                    .config
-                    .modules
-                    .iter()
-                    .any(|module| module.kind == ModuleKind::Clock)
-                {
-                    panel.model.time = now;
-                    observed_clock = true;
-                }
-            }
-            self.dirty |= observed_clock;
-        }
-        if self.presentation.is_some() {
-            return self.advance_presentation().map(usize::from);
-        }
-        self.service_pending_actions()?;
-        if let Some(index) = self.rendering_panel {
-            let Some(content) = self.renderer.poll()? else {
-                return Ok(0);
-            };
-            self.rendering_panel = None;
-            self.begin_presentation(index, content)?;
-            return Ok(0);
-        }
-        if self.next_panel.is_none() && self.dirty {
-            self.dirty = false;
-            self.next_panel = Some(0);
-        }
-        let Some(index) = self.next_panel else {
-            return Ok(0);
-        };
-        if index == self.panels.len() {
-            self.next_panel = None;
-            return Ok(0);
-        }
-        let panel = &self.panels[index];
-        let scale = f64::from(panel.allocation.scale_numerator)
-            / f64::from(panel.allocation.scale_denominator);
-        self.renderer.submit(
-            panel.model.clone(),
-            panel.allocation.pixel.width,
-            panel.allocation.pixel.height,
-            scale,
-        )?;
-        self.rendering_panel = Some(index);
-        self.next_panel = Some(index + 1);
-        Ok(0)
+        self.service_turn()
     }
     fn transaction(&mut self) -> Result<TransactionId, String> {
         let value = self.next_transaction;
@@ -219,14 +218,12 @@ impl<R: ContentRenderer> ShellService<R> {
     fn send(&mut self, record: ShellContentRecord) -> Result<(), String> {
         let transaction = self.transaction()?;
         self.connection
-            .send_content(transaction, &record)
+            .enqueue_content(transaction, &record)
             .map_err(|error| format!("content send failed: {error}"))
     }
 
     fn allocate_panels(&mut self, allowance: u32) -> Result<(), String> {
         let outputs = self.facts.outputs.clone();
-        let output_count =
-            u64::try_from(outputs.len()).map_err(|_| "output count exceeds resource identity")?;
         for (index, output) in outputs.into_iter().enumerate() {
             let request_id = u64::try_from(index + 1).map_err(|_| "too many outputs")?;
             let (desired_width, desired_height) = match self.config.position {
@@ -286,39 +283,33 @@ impl<R: ContentRenderer> ShellService<R> {
                 model.workspaces = workspace_snapshot(snapshot);
                 model.epoch = snapshot.connection_epoch;
             }
-            let primary = u64::try_from(index + 1).map_err(|_| "output index overflow")?;
-            let alternate = output_count
-                .checked_add(primary)
-                .ok_or("resource identity exhausted")?;
-            // New resource IDs are admitted in panel iteration order. Keep each
-            // panel's alternate slot after every panel's primary slot so first
-            // use is globally monotonic under the grant's resource high-water.
             self.panels.push(Panel {
                 output,
                 allocation,
                 model,
+                dirty: true,
                 current_slot: None,
                 presented: None,
-                resources: [
-                    ResourceSlot {
-                        id: primary,
-                        generation: 1,
-                    },
-                    ResourceSlot {
-                        id: alternate,
-                        generation: 1,
-                    },
-                ],
+                resources: [ResourceSlot {
+                    id: 0,
+                    generation: 1,
+                    bytes: 0,
+                    state: ResourceState::Free,
+                    release_deadline: None,
+                }; 2],
             });
         }
         Ok(())
     }
 
     fn observe(&mut self) -> Result<(), String> {
+        self.connection
+            .poll_io()
+            .map_err(|error| format!("shell I/O: {error}"))?;
         for _ in 0..MAX_OBSERVATIONS_PER_TURN {
             let Some((_, snapshot)) = self
                 .connection
-                .poll_indicators()
+                .take_indicators()
                 .map_err(|error| format!("indicator receive failed: {error}"))?
             else {
                 break;
@@ -331,17 +322,18 @@ impl<R: ContentRenderer> ShellService<R> {
             for panel in &mut self.panels {
                 panel.model.workspaces = workspaces.clone();
                 panel.model.epoch = workspaces.epoch;
+                panel.dirty = true;
             }
-            self.dirty = true;
         }
         for _ in 0..MAX_OBSERVATIONS_PER_TURN {
             let Some((_, outcome)) = self
                 .connection
-                .poll_indicator_activation_outcome()
+                .take_indicator_activation_outcome()
                 .map_err(|error| format!("indicator outcome receive failed: {error}"))?
             else {
                 break;
             };
+            self.lifecycle.finish_action(outcome.event_id);
             if !self.pending_activation_events.remove(&outcome.event_id) {
                 continue;
             }
@@ -353,13 +345,36 @@ impl<R: ContentRenderer> ShellService<R> {
             }
         }
         for _ in 0..MAX_OBSERVATIONS_PER_TURN {
-            let Some((_, record)) = self
+            let Some((transaction, record)) = self
                 .connection
-                .poll_content()
+                .take_content()
                 .map_err(|error| format!("shell content receive failed: {error}"))?
             else {
                 break;
             };
+            let dispatch = self
+                .lifecycle
+                .dispatch(transaction, record)
+                .map_err(|error| format!("ordered content lifecycle: {error:?}"))?;
+            let record = dispatch.record;
+            if let ShellContentRecord::Action(action) = record {
+                if dispatch.action != Some(ContentActionDispatch::Cancelled) {
+                    self.handle_content_action(
+                        action,
+                        dispatch.action == Some(ContentActionDispatch::Eligible),
+                    )?;
+                }
+                continue;
+            }
+            if let ShellContentRecord::ResourceReleased(released) = &record {
+                self.release_resource(released)?;
+                continue;
+            }
+            if let ShellContentRecord::CandidateOutcome(outcome) = &record
+                && outcome.kind == CANDIDATE_PRESENTED
+            {
+                self.install_presented_targets(outcome)?;
+            }
             if let ShellContentRecord::OutputFacts(facts) = &record {
                 if facts != &self.facts {
                     return Err(
@@ -372,31 +387,19 @@ impl<R: ContentRenderer> ShellService<R> {
             if self.pending_content.len() == MAX_PENDING_CONTENT {
                 return Err("shell content response queue saturated".into());
             }
-            self.pending_content.push_back(record);
+            self.pending_content.push_back((transaction, record));
         }
         Ok(())
     }
 
-    fn service_pending_actions(&mut self) -> Result<(), String> {
-        for _ in 0..MAX_OBSERVATIONS_PER_TURN {
-            let Some(at) = self
-                .pending_content
-                .iter()
-                .position(|record| matches!(record, ShellContentRecord::Action(_)))
-            else {
-                break;
-            };
-            let Some(ShellContentRecord::Action(action)) = self.pending_content.remove(at) else {
-                unreachable!("position selected an action");
-            };
-            self.handle_content_action(action)?;
-        }
-        Ok(())
-    }
-
-    fn handle_content_action(&mut self, action: ContentAction) -> Result<(), String> {
+    fn handle_content_action(
+        &mut self,
+        action: ContentAction,
+        eligible: bool,
+    ) -> Result<(), String> {
         let mut message = None;
-        if action.kind == 1
+        if eligible
+            && action.kind == 1
             && action.reason == ContentReason::None as u16
             && action.event_id != 0
             && action.event_id > self.activation_high_water
@@ -429,7 +432,13 @@ impl<R: ContentRenderer> ShellService<R> {
                 .iter_mut()
                 .find(|panel| panel.output.output == action.output)
                 .ok_or("content action output disappeared")?;
-            crate::update::update(&mut panel.model, message)
+            let mut observed = panel
+                .presented
+                .as_ref()
+                .ok_or("presented action lost its model")?
+                .model
+                .clone();
+            crate::update::update(&mut observed, message)
                 .into_iter()
                 .any(|effect| {
                     matches!(effect,
@@ -442,7 +451,7 @@ impl<R: ContentRenderer> ShellService<R> {
         } else {
             false
         };
-        self.send(ShellContentRecord::ActionAck(ContentActionAck {
+        let ack = ContentActionAck {
             grant: action.grant,
             output: action.output,
             candidate_generation: action.candidate_generation,
@@ -454,27 +463,30 @@ impl<R: ContentRenderer> ShellService<R> {
             action_id: action.action_id,
             event_id: action.event_id,
             disposition: if accepted { 1 } else { 2 },
-        }))?;
+        };
         if action.grant == self.limits.grant && action.event_id > self.activation_high_water {
             self.activation_high_water = action.event_id;
         }
+        let ack_transaction = self.transaction()?;
+        let activation_transaction = self.transaction()?;
+        let activation = ShellIndicatorActivation {
+            connection_epoch: self.connection.connection_epoch(),
+            snapshot_generation: action.target_generation,
+            output: sophia_protocol::OutputId::from_raw(action.output.id),
+            indicator: action.target_id,
+            action: action.action_id,
+            event_id: action.event_id,
+        };
+        self.connection
+            .enqueue_indicator_action_response(
+                ack_transaction,
+                &ack,
+                accepted.then_some((activation_transaction, &activation)),
+            )
+            .map_err(|error| format!("action response admission: {error}"))?;
         if !accepted {
             return Ok(());
         }
-        let transaction = self.transaction()?;
-        self.connection
-            .send_indicator_activation(
-                transaction,
-                &ShellIndicatorActivation {
-                    connection_epoch: self.connection.connection_epoch(),
-                    snapshot_generation: action.target_generation,
-                    output: sophia_protocol::OutputId::from_raw(action.output.id),
-                    indicator: action.target_id,
-                    action: action.action_id,
-                    event_id: action.event_id,
-                },
-            )
-            .map_err(|error| format!("indicator activation send failed: {error}"))?;
         self.pending_activation_events.insert(action.event_id);
         Ok(())
     }
@@ -483,7 +495,7 @@ impl<R: ContentRenderer> ShellService<R> {
         let deadline = Instant::now() + RESPONSE_TIMEOUT;
         loop {
             self.observe()?;
-            if let Some(record) = self.pending_content.pop_front() {
+            if let Some((_, record)) = self.pending_content.pop_front() {
                 return Ok(record);
             }
             if Instant::now() >= deadline {
@@ -500,11 +512,13 @@ fn pixel_checksum(bytes: &[u8]) -> u64 {
     })
 }
 
-fn receive_content(connection: &mut ShellConnection) -> Result<ShellContentRecord, String> {
+fn receive_content(
+    connection: &mut ShellConnection,
+) -> Result<(TransactionId, ShellContentRecord), String> {
     let deadline = Instant::now() + RESPONSE_TIMEOUT;
     loop {
         match connection.poll_content() {
-            Ok(Some((_, record))) => return Ok(record),
+            Ok(Some(record)) => return Ok(record),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(IDLE_POLL),
             Ok(None) => return Err("shell content response timed out".into()),
             Err(error) => return Err(format!("shell content receive failed: {error}")),

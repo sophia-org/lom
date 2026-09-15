@@ -170,6 +170,27 @@ including fractional scaling. No local popup intent is recorded as visibility.
 
 ### t006
 
+The September 15 lifecycle checkpoint retains one Xilem/Masonry host per exact
+grant/output/allocation/scale generation. Reconciliation keeps the widget tree;
+clock updates dirty a panel only when its configured visible text changes.
+A capacity-one GPU worker feeds independent output presentation state machines.
+Resource release, permits and candidate outcomes no longer impose a global
+wait. Two lazy resource slots per output remain subject to advertised aggregate
+byte/resource/candidate limits; upload service admits at most four chunks per
+turn. Presented installs the originating model and targets through the generic
+ordered client lifecycle, independently of retiring the preceding resource.
+
+The client pins published Sophia `2e569301` directly, with no local Cargo patch.
+Device-hidden `tools/check.sh` passes 50 Rust tests, 16 tooling tests, dependency
+and layout checks and strict Clippy. A compiled global-retirement-wait mutant
+fails the two-output private-socket control. Retained-tree controls inspect
+actual Masonry widget identities; rendering in the socket fixture is simulated.
+These checks do not establish GPU/driver latency, compositor owner-loop/policy
+causality, or attended acceptance. Source and logs are retained in Sophia's
+`.artifacts/lom-lifecycle-dev`; the failed private-cache setup precedes tests and
+is not counted as a pass. Reconnect/topology, complete action latency evidence
+and the paired native workload remain open.
+
 Maintain per-output state, dirty work and generations through output addition,
 removal, scale/allocation changes and content-grant replacement. Replace the
 current exit-on-facts-change path with explicit bounded recovery; if the

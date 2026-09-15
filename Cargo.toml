@@ -23,8 +23,8 @@ ash = { version = "0.38", default-features = false }
 pollster = "0.4"
 rustix = { version = "1.1", features = ["fs"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-sophia-protocol = { git = "https://github.com/sophia-org/sophia-stack", rev = "22c01aa10103f07920ccc9b2ea386d453befb87d" }
-sophia-shell-client = { git = "https://github.com/sophia-org/sophia-stack", rev = "22c01aa10103f07920ccc9b2ea386d453befb87d" }
+sophia-protocol = { git = "https://github.com/sophia-org/sophia-stack", rev = "2e569301bc803cdcdcc234097b84f724e5296f23" }
+sophia-shell-client = { git = "https://github.com/sophia-org/sophia-stack", rev = "2e569301bc803cdcdcc234097b84f724e5296f23" }
 
 [dev-dependencies]
 imaging_vello_cpu = "0.0.1"

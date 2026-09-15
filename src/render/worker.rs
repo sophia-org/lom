@@ -2,7 +2,7 @@
 
 use super::{GpuAdmissionEvidence, GpuGrant, GpuPreview};
 use crate::model::Model;
-use crate::service::{ContentRenderer, RenderedContent};
+use crate::service::{ContentRenderer, RenderIdentity, RenderedContent};
 use crate::ui::PreviewDriver;
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::time::{Duration, Instant};
@@ -10,10 +10,55 @@ use std::time::{Duration, Instant};
 const GPU_JOB_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct RenderJob {
+    identity: RenderIdentity,
     model: Model,
     width: u32,
     height: u32,
     scale: f64,
+}
+
+type HostKey = (u64, u64, u64, u64, u64, u64, u64);
+
+#[derive(Default)]
+struct RetainedHosts {
+    hosts: std::collections::BTreeMap<HostKey, (PreviewDriver, u32, u32, u64)>,
+}
+
+impl RetainedHosts {
+    fn scene(
+        &mut self,
+        job: RenderJob,
+    ) -> Result<(crate::ui::PreviewScene, Vec<crate::ui::ContentTargetLayout>), String> {
+        let identity = job.identity;
+        let key = (
+            identity.grant.connection_epoch,
+            identity.grant.content_grant_epoch,
+            identity.output.id,
+            identity.output.generation,
+            identity.allocation.id,
+            identity.allocation.generation,
+            identity.scale_generation,
+        );
+        // A replacement allocation/grant cannot inherit another host's widget
+        // state. Unaffected outputs keep their existing Xilem/Masonry roots.
+        self.hosts
+            .retain(|old, _| (old.0, old.1) == (key.0, key.1) && (old.2 != key.2 || *old == key));
+        if let Some((host, width, height, scale)) = self.hosts.get_mut(&key) {
+            if (*width, *height, *scale) != (job.width, job.height, job.scale.to_bits()) {
+                return Err("allocation geometry changed without a new generation".into());
+            }
+            host.reconcile_model(job.model);
+            return Ok(host.scene_and_targets());
+        }
+        if self.hosts.len() >= 16 {
+            return Err("retained UI host limit exhausted".into());
+        }
+        let mut host = PreviewDriver::new(job.model, job.width, job.height, job.scale, false)?;
+        let scene = host.scene_and_targets();
+        self.hosts
+            .insert(key, (host, job.width, job.height, job.scale.to_bits()));
+        Ok(scene)
+    }
 }
 
 /// Capacity-one renderer executor. The worker alone owns Vello and wgpu.
@@ -53,15 +98,13 @@ impl RendererWorker {
                         return;
                     }
                 };
+                let mut hosts = RetainedHosts::default();
                 while let Ok(job) = incoming.recv() {
-                    let result =
-                        PreviewDriver::new(job.model, job.width, job.height, job.scale, false)
-                            .and_then(|mut driver| {
-                                let (mut scene, targets) = driver.scene_and_targets();
-                                renderer
-                                    .readback_content(&mut scene)
-                                    .map(|pixels| RenderedContent { pixels, targets })
-                            });
+                    let result = hosts.scene(job).and_then(|(mut scene, targets)| {
+                        renderer
+                            .readback_content(&mut scene)
+                            .map(|pixels| RenderedContent { pixels, targets })
+                    });
                     if completed.send(result).is_err() {
                         break;
                     }
@@ -84,11 +127,19 @@ impl RendererWorker {
 }
 
 impl ContentRenderer for RendererWorker {
-    fn submit(&mut self, model: Model, width: u32, height: u32, scale: f64) -> Result<(), String> {
+    fn submit(
+        &mut self,
+        identity: RenderIdentity,
+        model: Model,
+        width: u32,
+        height: u32,
+        scale: f64,
+    ) -> Result<(), String> {
         if self.submitted_at.is_some() {
             return Err("GPU worker already owns a render job".into());
         }
         match self.requests.try_send(RenderJob {
+            identity,
             model,
             width,
             height,

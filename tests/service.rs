@@ -31,6 +31,9 @@ use std::{
     time::Duration,
 };
 
+#[path = "support/service_multiplex.rs"]
+mod service_multiplex;
+
 static SOCKET_ID: AtomicU64 = AtomicU64::new(1);
 const GRANT: ContentGrant = ContentGrant {
     connection_epoch: 7,
@@ -57,7 +60,14 @@ struct FixedRenderer {
 struct ImmediateRenderer(Option<ContentPixels>);
 
 impl ContentRenderer for ImmediateRenderer {
-    fn submit(&mut self, _model: Model, width: u32, height: u32, scale: f64) -> Result<(), String> {
+    fn submit(
+        &mut self,
+        _identity: lom::service::RenderIdentity,
+        _model: Model,
+        width: u32,
+        height: u32,
+        scale: f64,
+    ) -> Result<(), String> {
         assert_eq!((width, height, scale), (8, 48, 2.0));
         self.0 = Some(ContentPixels::from_rgba8(
             width,
@@ -75,7 +85,14 @@ impl ContentRenderer for ImmediateRenderer {
     }
 }
 impl ContentRenderer for FixedRenderer {
-    fn submit(&mut self, model: Model, width: u32, height: u32, scale: f64) -> Result<(), String> {
+    fn submit(
+        &mut self,
+        _identity: lom::service::RenderIdentity,
+        model: Model,
+        width: u32,
+        height: u32,
+        scale: f64,
+    ) -> Result<(), String> {
         assert_eq!((width, height, scale), (8, 48, 2.0));
         self.calls += 1;
         if let Some(started) = self.started.take() {
@@ -213,8 +230,10 @@ fn candidate_generations_are_unique_across_outputs() {
     ));
     let listener = UnixListener::bind(&path).unwrap();
     let (done_sender, done_receiver) = std::sync::mpsc::channel();
-    let server =
-        std::thread::spawn(move || serve_two_outputs(listener.accept().unwrap().0, done_receiver));
+    let (drained_sender, drained_receiver) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        serve_two_outputs(listener.accept().unwrap().0, done_receiver, drained_sender)
+    });
     let capabilities = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS;
@@ -233,15 +252,25 @@ fn candidate_generations_are_unique_across_outputs() {
     let mut service =
         ShellService::new(connection, config, theme, 48, ImmediateRenderer(None)).unwrap();
     let mut presented = 0;
-    while presented < 4 {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while presented < 4 || drained_receiver.try_recv().is_err() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "multiplexed retirement did not drain"
+        );
         presented += service.step().unwrap();
+        std::thread::yield_now();
     }
     done_sender.send(()).unwrap();
     server.join().unwrap();
     let _ = std::fs::remove_file(path);
 }
 
-fn serve_two_outputs(mut stream: UnixStream, done: std::sync::mpsc::Receiver<()>) {
+fn serve_two_outputs(
+    mut stream: UnixStream,
+    done: std::sync::mpsc::Receiver<()>,
+    drained: std::sync::mpsc::Sender<()>,
+) {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
@@ -337,44 +366,9 @@ fn serve_two_outputs(mut stream: UnixStream, done: std::sync::mpsc::Receiver<()>
             }),
         );
     }
-    let first = serve_frame(&mut stream, OUTPUT, allocations[0], 1, 22, 31, 0);
-    let second = serve_frame(&mut stream, SECOND_OUTPUT, allocations[1], 2, 23, 32, 0);
-    std::thread::sleep(Duration::from_millis(50));
-    for frame in encode_shell_indicator_snapshot(
-        TransactionId::from_raw(70),
-        &ShellIndicatorSnapshot {
-            connection_epoch: GRANT.connection_epoch,
-            generation: 1,
-            active_output: None,
-            statuses: Vec::new(),
-            indicators: Vec::new(),
-        },
-    )
-    .unwrap()
-    {
-        stream.write_all(&frame).unwrap();
-    }
-    serve_frame(&mut stream, OUTPUT, allocations[0], 3, 24, 33, 0);
-    release_retired(&mut stream, first);
-    serve_frame(&mut stream, SECOND_OUTPUT, allocations[1], 4, 25, 34, 0);
-    release_retired(&mut stream, second);
+    service_multiplex::exchange(&mut stream);
+    drained.send(()).unwrap();
     done.recv_timeout(Duration::from_secs(2)).unwrap();
-}
-
-fn release_retired(stream: &mut UnixStream, expected: ContentResourceId) {
-    let (transaction, ShellContentRecord::ResourceRetire(retire)) = receive(stream) else {
-        panic!("expected resource retirement after replacement presentation");
-    };
-    assert_eq!(retire.resource, expected);
-    send_tx(
-        stream,
-        transaction,
-        ShellContentRecord::ResourceReleased(sophia_protocol::ContentResourceReleased {
-            grant: GRANT,
-            resource: expected,
-            reason: ContentReason::None as u16,
-        }),
-    );
 }
 
 fn serve_one(
@@ -527,15 +521,7 @@ fn serve_one(
         panic!("expected resource retirement after its successor presented");
     };
     assert_eq!(retire.resource, first);
-    send_tx(
-        &mut stream,
-        retire_tx,
-        ShellContentRecord::ResourceReleased(sophia_protocol::ContentResourceReleased {
-            grant: GRANT,
-            resource: first,
-            reason: ContentReason::None as u16,
-        }),
-    );
+    // Keep the old resource pinned while the successor's action completes.
     let action = ContentAction {
         grant: GRANT,
         output: OUTPUT,
@@ -593,6 +579,15 @@ fn serve_one(
         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
     ));
     stream.set_read_timeout(None).unwrap();
+    send_tx(
+        &mut stream,
+        retire_tx,
+        ShellContentRecord::ResourceReleased(sophia_protocol::ContentResourceReleased {
+            grant: GRANT,
+            resource: first,
+            reason: ContentReason::None as u16,
+        }),
+    );
     activation_done.send(()).unwrap();
     done.recv_timeout(Duration::from_secs(2)).unwrap();
 }
@@ -672,7 +667,7 @@ fn serve_frame(
             max_candidate_bytes: 8192,
         }),
     );
-    let (_, ShellContentRecord::CandidateBegin(candidate)) = receive(stream) else {
+    let (candidate_tx, ShellContentRecord::CandidateBegin(candidate)) = receive(stream) else {
         panic!("expected candidate begin");
     };
     let (_, ShellContentRecord::CandidateChunk(chunk)) = receive(stream) else {
@@ -689,9 +684,9 @@ fn serve_frame(
     assert_eq!(chunk.targets.len(), target_count as usize);
     assert_eq!(end.candidate_generation, candidate.candidate_generation);
     for (kind, epoch) in [(1, 0), (2, presentation_epoch)] {
-        send(
+        send_tx(
             stream,
-            60 + expected_candidate * 2 + u64::from(kind),
+            candidate_tx,
             ShellContentRecord::CandidateOutcome(sophia_protocol::ContentCandidateOutcome {
                 grant: GRANT,
                 candidate_generation: candidate.candidate_generation,

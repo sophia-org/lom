@@ -90,6 +90,11 @@ private, GPU-free `src/render/completion.rs` module directly. This exercises the
 production poll/callback deadline function without exposing a test API or opening
 a GPU. Test bodies remain outside `src`.
 
+The retained-driver control in `tests/support/retained_driver.rs` is mounted
+privately from the driver to inspect real Masonry widget identities across a
+clock-only reconciliation. It adds no public inspection API and initializes
+neither a display nor a GPU.
+
 Repository-tool tests live in `tools/tests/` and exercise the actual command or
 observable behavior. Gate regressions must prove both acceptance and rejection,
 especially at threshold boundaries; a helper-only assertion is not sufficient.
