@@ -85,6 +85,43 @@ fn minimal_images_use_real_xilem_masonry_scenes() {
 }
 
 #[test]
+fn only_active_workspace_has_an_underline_after_reconciliation() {
+    let model = support::model();
+    let style = model.theme.resolve(&model.config.modules[0]);
+    let mut next = model.workspaces.clone();
+    let mut driver = PreviewDriver::new(model, 1280, 24, 1.0, false).unwrap();
+    let (_, targets) = driver.scene_and_targets();
+    let active = targets.iter().find(|t| t.indicator == 1).unwrap();
+    let elsewhere = targets.iter().find(|t| t.indicator == 2).unwrap();
+    let sample = |image: &image::RgbaImage, target: &lom::ui::ContentTargetLayout| {
+        image.get_pixel(target.x as u32 + target.width / 2, 23).0
+    };
+    let rgba = |c: lom::config::Color| [c.0[0], c.0[1], c.0[2], 255];
+    let before = raster(&mut driver);
+    assert_eq!(sample(&before, active), rgba(style.active));
+    assert_eq!(sample(&before, elsewhere), rgba(style.selected));
+    next.generation += 1;
+    next.entries[0].active = false;
+    next.entries[0].visible = true;
+    next.entries[1].active = true;
+    driver.apply(Msg::Workspaces(next));
+    let after = raster(&mut driver);
+    assert_eq!(sample(&after, active), rgba(style.selected));
+    assert_eq!(sample(&after, elsewhere), rgba(style.active));
+    let (_, updated) = driver.scene_and_targets();
+    assert_eq!(
+        targets
+            .iter()
+            .map(|t| (t.indicator, t.action))
+            .collect::<Vec<_>>(),
+        updated
+            .iter()
+            .map(|t| (t.indicator, t.action))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn calendar_and_week_numbers_have_reviewable_snapshots() {
     let mut model = support::model();
     let id = model.module_id(5);

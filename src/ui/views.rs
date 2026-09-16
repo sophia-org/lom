@@ -115,18 +115,12 @@ pub fn panel_view(model: &Model, width: f64, height: f64) -> impl WidgetView<UiS
                                 .map(|(entry, title)| {
                                     let fill = if entry.urgent {
                                         style.urgent
-                                    } else if entry.active {
+                                    } else if entry.active || entry.visible {
                                         style.selected
                                     } else {
                                         style.background
                                     };
-                                    let underline = if entry.active {
-                                        style.active
-                                    } else if entry.visible {
-                                        style.foreground
-                                    } else {
-                                        fill
-                                    };
+                                    let underline = if entry.active { style.active } else { fill };
                                     let content: BoxView =
                                         if let Some(action) = entry.action.filter(|a| *a != 0) {
                                             control(
