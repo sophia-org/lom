@@ -2,6 +2,7 @@
 
 mod presentation;
 mod scheduler;
+mod target_generations;
 use presentation::PendingPresentation;
 
 use crate::{
@@ -77,6 +78,7 @@ pub trait ContentRenderer {
 }
 
 struct Panel {
+    target_generations: target_generations::TargetGenerations,
     output: ContentOutputFactsEntry,
     allocation: ContentAllocationResult,
     model: Model,
@@ -294,6 +296,7 @@ impl<R: ContentRenderer> ShellService<R> {
                 model.epoch = snapshot.connection_epoch;
             }
             self.panels.push(Panel {
+                target_generations: Default::default(),
                 output,
                 allocation,
                 model,
@@ -434,13 +437,13 @@ impl<R: ContentRenderer> ShellService<R> {
                     .iter()
                     .find(|target| {
                         target.indicator == action.target_id
-                            && target.generation == action.target_generation
+                            && target.target_generation == action.target_generation
                             && target.action == action.action_id
                     })
                     .map(|target| target.message.clone())
             });
         }
-        let accepted = if let Some(message) = message {
+        let publication = if let Some(message) = message {
             let panel = self
                 .panels
                 .iter_mut()
@@ -454,17 +457,24 @@ impl<R: ContentRenderer> ShellService<R> {
                 .clone();
             crate::update::update(&mut observed, message)
                 .into_iter()
-                .any(|effect| {
-                    matches!(effect,
-                    crate::update::Effect::ActivateWorkspace { epoch, generation, indicator, action: id }
-                        if epoch == self.connection.connection_epoch()
-                            && generation == action.target_generation
-                            && indicator == action.target_id
-                            && id == action.action_id)
+                .find_map(|effect| match effect {
+                    crate::update::Effect::ActivateWorkspace {
+                        epoch,
+                        generation,
+                        indicator,
+                        action: id,
+                    } if epoch == self.connection.connection_epoch()
+                        && indicator == action.target_id
+                        && id == action.action_id =>
+                    {
+                        Some(generation)
+                    }
+                    _ => None,
                 })
         } else {
-            false
+            None
         };
+        let accepted = publication.is_some();
         let ack = ContentActionAck {
             grant: action.grant,
             output: action.output,
@@ -485,7 +495,7 @@ impl<R: ContentRenderer> ShellService<R> {
         let activation_transaction = self.transaction()?;
         let activation = ShellIndicatorActivation {
             connection_epoch: self.connection.connection_epoch(),
-            snapshot_generation: action.target_generation,
+            snapshot_generation: publication.unwrap_or(0),
             output: sophia_protocol::OutputId::from_raw(action.output.id),
             indicator: action.target_id,
             action: action.action_id,

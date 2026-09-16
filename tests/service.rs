@@ -138,6 +138,7 @@ impl ContentRenderer for FixedRenderer {
             RenderedContent {
                 pixels,
                 targets: vec![ContentTargetLayout {
+                    target_generation: 0,
                     message,
                     indicator: 14,
                     action: 15,
@@ -535,7 +536,7 @@ fn serve_one(
         interaction_generation: 1,
         allocation,
         target_id: 14,
-        target_generation: 7,
+        target_generation: 2,
         action_id: 15,
         event_id: 41,
         kind: 1,
@@ -548,6 +549,10 @@ fn serve_one(
     assert_eq!((ack.event_id, ack.disposition), (41, 1));
     let frame = read_frame(&mut stream);
     let (activation_tx, activation) = decode_shell_indicator_activation(&frame).unwrap();
+    assert_eq!(
+        activation.snapshot_generation, 7,
+        "publication is not button generation2"
+    );
     assert_eq!(
         (activation.event_id, activation.indicator, activation.action),
         (41, 14, 15)

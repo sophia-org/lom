@@ -26,6 +26,7 @@ pub(super) struct PendingPresentation {
     permit: Option<ContentFramePermit>,
     content: Option<RenderedContent>,
     targets: Vec<ContentTargetLayout>,
+    targets_prepared: bool,
     raster: RasterSummary,
     raster_reused: bool,
     phase: PresentationPhase,
@@ -91,6 +92,7 @@ impl<R: ContentRenderer> ShellService<R> {
                 bytes: pixels.bytes().len(),
                 checksum: pixel_checksum(pixels.bytes()),
             },
+            targets_prepared: false,
             targets: content.targets.clone(),
             content: Some(content),
             raster_reused: false,
@@ -154,6 +156,7 @@ impl<R: ContentRenderer> ShellService<R> {
             permit: None,
             content: None,
             raster_reused: true,
+            targets_prepared: false,
             targets,
             raster: presented.raster,
             phase: PresentationPhase::ResourceAccepted,
@@ -383,6 +386,14 @@ impl<R: ContentRenderer> ShellService<R> {
         &mut self,
         pending: &mut PendingPresentation,
     ) -> Result<bool, String> {
+        if !pending.targets_prepared {
+            self.panels[pending.panel].target_generations.prepare(
+                &pending.model,
+                &mut pending.targets,
+                self.limits.max_candidate_targets as usize,
+            )?;
+            pending.targets_prepared = true;
+        }
         let candidate = self.next_candidate_generation;
         if !self.submit_candidate(
             pending.panel,
@@ -583,7 +594,7 @@ impl<R: ContentRenderer> ShellService<R> {
                     surface_index: 0,
                     action_kind: 1,
                     target_id: target.indicator,
-                    target_generation: target.generation,
+                    target_generation: target.target_generation,
                     action_id: target.action,
                     bounds_px: ContentPixelRect {
                         x: target.x,

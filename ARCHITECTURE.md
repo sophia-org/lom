@@ -397,3 +397,15 @@ upstream branches; they are not dependency pins):
 - [Parley text stack](https://github.com/linebender/parley)
 - [Vello GPU](https://github.com/linebender/vello)
 - [Ironbar product inspiration](https://github.com/JakeStanger/ironbar)
+
+
+### Button continuity across presentation (2026-09-16)
+
+The content service assigns bounded per-panel target generations independently
+of indicator publication revisions. Equivalent layouts keep button lifetimes;
+changed label, semantic owner/action or geometry and removal/reappearance consume
+fresh generations. The acknowledged allocation/scale owns the registry. A pending
+candidate retains its assigned identities across enqueue retries; only Presented
+installs its immutable messages. The exact message supplies the WM snapshot
+revision, while ContentAction/ACK use the button generation. Sophia owns capture
+continuity and still names the exact current presented candidate on the wire.

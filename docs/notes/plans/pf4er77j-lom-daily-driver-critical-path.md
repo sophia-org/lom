@@ -417,3 +417,22 @@ Candidate diagnostics distinguish `raster_source=rendered` from `reused`.
 
 Native continuity, the full 40-action workload, latency and daily-driver
 acceptance remain pending under t008/t009; no task is closed by offline checks.
+
+
+### Click continuity follow-up (2026-09-16)
+
+After bar-flash repair, an attended run reported occasional second clicks. Sophia
+was cancelling the press when clock rendering replaced the candidate before
+release. The shared presentation boundary now preserves only continuous equivalent
+button authority, with exact-current-candidate Actions. Lom keeps a bounded target
+lifetime registry independent of indicator snapshot revision; the exact retained
+message supplies activation.snapshot_generation. Redraw and interaction-only
+candidates use the same registry, and enqueue retries retain prepared identities.
+
+Service tests retain old resource release while both outputs process refreshes
+and exact actions; target generations stay 1 across publication revisions 1..3,
+while activation messages carry their own correct publication revisions. Private
+registry controls cover rename/removal/reappearance/geometry and negotiated bounds.
+No GPU/native acceptance is inferred. t008/t009 remain open for 40 intended clicks,
+20 per output, including clock-crossing holds, and separate clean shutdown. Sophia's
+`window allocation frontend disconnected` in the retained capture remains distinct.

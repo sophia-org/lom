@@ -190,3 +190,8 @@ For documentation-only changes, inspect the text, links, and architecture
 consistency; a renderer build is unnecessary. Changes to this gate require its
 regression tests and the repository audit to pass. Report exactly which checks
 ran and which native or capability-dependent evidence remains open.
+
+The external target-generation test compiles the private passive target-generation
+module to exercise lifetime transitions directly. It adds no public API, device
+access or production test body; the real socket service tests exercise its normal
+caller and the distinct indicator revision on actual encoded responses.

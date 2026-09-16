@@ -30,6 +30,7 @@ impl ContentRenderer for CountedRenderer {
                 vec![if entry.active { 255 } else { 128 }; (width * height * 4) as usize],
             )?,
             targets: vec![ContentTargetLayout {
+                target_generation: 0,
                 message: Msg::ActivateWorkspace {
                     owner: model.module_id(0),
                     epoch: model.epoch,
@@ -253,16 +254,10 @@ fn exchange(stream: &mut UnixStream) {
                     let resource = chunk.placements[0].resource;
                     let target = chunk.targets[0].clone();
                     assert_eq!(
-                        target.target_generation,
-                        if generations < 2 {
-                            1
-                        } else if generations < 4 {
-                            2
-                        } else {
-                            3
-                        }
+                        target.target_generation, 1,
+                        "unchanged button must not inherit publication revision"
                     );
-                    if (begin.output == SECOND_OUTPUT || target.target_generation == 3)
+                    if (begin.output == SECOND_OUTPUT || generations >= 4)
                         && let Some(previous) = placed.get(&begin.output.id)
                     {
                         assert_eq!(
@@ -278,7 +273,7 @@ fn exchange(stream: &mut UnixStream) {
                     generations += 1;
                     assert_eq!(end.candidate_generation, generations);
                     let (allocation, target) = detail.unwrap();
-                    if begin.output == SECOND_OUTPUT && target.target_generation == 2 {
+                    if begin.output == SECOND_OUTPUT && generations <= 4 && generations > 2 {
                         // A new candidate is submitted but not Presented. The
                         // previous model/targets must still handle its event.
                         let (old_candidate, old_allocation, old_target): &(

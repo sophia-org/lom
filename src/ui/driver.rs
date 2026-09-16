@@ -19,6 +19,8 @@ use xilem_masonry::{
 /// A locally rendered scene and its physical dimensions; never a presented candidate.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContentTargetLayout {
+    /// Stable button lifetime assigned by the content service, not the publication.
+    pub target_generation: u64,
     /// Exact TEA message retained with the presented target.
     pub message: Msg,
     /// Indicator identity bound to this button.
@@ -204,6 +206,7 @@ impl PreviewDriver {
                 let x1 = (bounds.x1 * self.scale).ceil().min(f64::from(self.width));
                 let y1 = (bounds.y1 * self.scale).ceil().min(f64::from(self.height));
                 (x1 > x0 && y1 > y0).then_some(ContentTargetLayout {
+                    target_generation: 0,
                     message,
                     indicator,
                     action,
