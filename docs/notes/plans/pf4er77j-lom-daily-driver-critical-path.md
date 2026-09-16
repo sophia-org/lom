@@ -372,3 +372,18 @@ and [configuration](../../configuration.md) own client constraints.
 [Sophia's paired plan](https://github.com/sophia-org/sophia-stack/blob/master/docs/notes/plans/1m3z9q0j-lom-and-sophia-portable-gpu-shell-critical-path.md)
 owns server exits; [its decision](https://github.com/sophia-org/sophia-stack/blob/master/docs/notes/decisions/mn4mzcnf-separate-shell-presentation-from-gpu-execution-permission.md)
 owns GPU/presentation policy. [Active tasks](../../../todo.md) own local status.
+
+## 2026-09-16 workspace ownership repair
+
+The DP-2 incident is being repaired in Sophia's explicit WM action target and
+Hagia's configured workspace ownership. Lom remains a generic consumer of
+published output/indicator/label/action records. Numbering belongs to the WM
+profile: DP-1 1–3, DP-2 4–6; Super+number selects the current owning output.
+No monitor-number table or special DP-2 selection behavior belongs in Lom.
+
+The next attended t008/t009 run must check both disjoint labels and the exact
+output that changes, steady per-output indicators, the reported DP-2 flashing,
+keyboard selection, workload latency and clean shutdown. Headless policy/socket
+regressions cannot close those observations. The Sophia launcher builds and
+records the exact clean signed Hagia source alongside Lom/Sophia identities.
+No native acceptance, installation or release claim follows from this repair.
