@@ -387,3 +387,33 @@ keyboard selection, workload latency and clean shutdown. Headless policy/socket
 regressions cannot close those observations. The Sophia launcher builds and
 records the exact clean signed Hagia source alongside Lom/Sophia identities.
 No native acceptance, installation or release claim follows from this repair.
+
+## 2026-09-16: bar continuity and interaction-only updates
+
+Operator evidence from Sophia capture `20260916T114128Z` confirms correct
+per-output labels and mouse/keyboard switching. Both bars flashed on switching.
+Sophia found a policy-cycle composition path omitting shell pixels, then
+restoring them when Lom republished. That generic composition repair is separate
+from this client's unnecessary rendering; reducing redraws alone could prolong
+the missing bar.
+
+Lom now separates visual invalidation from interaction revision changes. The
+comparison uses the same filtered labels and colors as the view, along with
+widget shape, styles, allocation-local model and formatted clocks. Unchanged
+pixels reuse the resident resource in a new candidate with refreshed targets;
+no GPU work/upload/retire occurs for that candidate. Geometry is reused only
+when the resolved view agrees. Presented, not local rebinding or Prepared,
+installs the new model/targets. In-flight render origins remain immutable and
+new observations coalesce independently per output.
+
+The private socket control verifies three renders/uploads for two initial bars
+and one changed bar, followed by interaction-only candidates on both outputs.
+An old resource release stays withheld while both outputs' exact actions
+complete. An action before replacement Presented still uses the old targets.
+CPU-raster controls compare actual Xilem/Masonry pixels, target geometry and
+messages across revision-only updates and foreign-output changes. This evidence
+uses supplied renderer/native outcomes at the socket boundary, not a GPU/VT run.
+Candidate diagnostics distinguish `raster_source=rendered` from `reused`.
+
+Native continuity, the full 40-action workload, latency and daily-driver
+acceptance remain pending under t008/t009; no task is closed by offline checks.

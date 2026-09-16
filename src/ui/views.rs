@@ -113,14 +113,8 @@ pub fn panel_view(model: &Model, width: f64, height: f64) -> impl WidgetView<UiS
                             let entries: Vec<BoxView> = modules::workspaces(model, config)
                                 .into_iter()
                                 .map(|(entry, title)| {
-                                    let fill = if entry.urgent {
-                                        style.urgent
-                                    } else if entry.active || entry.visible {
-                                        style.selected
-                                    } else {
-                                        style.background
-                                    };
-                                    let underline = if entry.active { style.active } else { fill };
+                                    let (fill, underline) =
+                                        crate::modules::workspace_colors(entry, &style);
                                     let content: BoxView =
                                         if let Some(action) = entry.action.filter(|a| *a != 0) {
                                             control(

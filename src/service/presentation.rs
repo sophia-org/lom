@@ -24,7 +24,10 @@ pub(super) struct PendingPresentation {
     upload_transaction: TransactionId,
     next_chunk: u32,
     permit: Option<ContentFramePermit>,
-    content: RenderedContent,
+    content: Option<RenderedContent>,
+    targets: Vec<ContentTargetLayout>,
+    raster: RasterSummary,
+    raster_reused: bool,
     phase: PresentationPhase,
     deadline: Instant,
     presentation_epoch: u64,
@@ -82,7 +85,15 @@ impl<R: ContentRenderer> ShellService<R> {
             upload_transaction,
             next_chunk: 0,
             permit: None,
-            content,
+            raster: RasterSummary {
+                width: pixels.width(),
+                height: pixels.height(),
+                bytes: pixels.bytes().len(),
+                checksum: pixel_checksum(pixels.bytes()),
+            },
+            targets: content.targets.clone(),
+            content: Some(content),
+            raster_reused: false,
             phase: PresentationPhase::ResourceUnqueued,
             deadline: Instant::now() + RESPONSE_TIMEOUT,
             presentation_epoch: 0,
@@ -92,6 +103,66 @@ impl<R: ContentRenderer> ShellService<R> {
                 .take()
                 .ok_or("render completion lost its originating model")?,
         });
+        Ok(())
+    }
+
+    pub(super) fn refresh_interaction(&mut self, index: usize) -> Result<(), String> {
+        let panel = &self.panels[index];
+        if panel.dirty
+            || !panel.interaction_dirty
+            || self.rendering_panel == Some(index)
+            || self
+                .presentations
+                .iter()
+                .any(|pending| pending.panel == index)
+            || self.presentations.len() >= self.limits.max_pending_candidates_total as usize
+        {
+            return Ok(());
+        }
+        let Some(presented) = panel.presented.as_ref() else {
+            return Ok(());
+        };
+        let Some(targets) =
+            crate::ui::retarget_unchanged_panel(&presented.model, &panel.model, &presented.targets)
+        else {
+            self.panels[index].dirty = true;
+            return Ok(());
+        };
+        if targets == presented.targets {
+            self.panels[index].interaction_dirty = false;
+            return Ok(());
+        }
+        let slot_index = panel
+            .current_slot
+            .ok_or("presented panel lost its resource")?;
+        let slot = panel.resources[slot_index];
+        if slot.state != ResourceState::Resident {
+            return Err("interaction refresh lost resident pixels".into());
+        }
+        self.presentations.push(PendingPresentation {
+            panel: index,
+            slot_index,
+            resource: ContentResourceId {
+                id: slot.id,
+                generation: slot.generation,
+            },
+            old: None,
+            candidate: 0,
+            demand_id: 0,
+            upload_transaction: TransactionId::from_raw(0),
+            next_chunk: 0,
+            permit: None,
+            content: None,
+            raster_reused: true,
+            targets,
+            raster: presented.raster,
+            phase: PresentationPhase::ResourceAccepted,
+            deadline: Instant::now() + RESPONSE_TIMEOUT,
+            presentation_epoch: 0,
+            indicator_revision: panel.model.workspaces.generation,
+            model: panel.model.clone(),
+        });
+        self.panels[index].interaction_dirty = false;
         Ok(())
     }
 
@@ -126,7 +197,11 @@ impl<R: ContentRenderer> ShellService<R> {
         &mut self,
         pending: &mut PendingPresentation,
     ) -> Result<bool, String> {
-        let pixels = &pending.content.pixels;
+        let pixels = &pending
+            .content
+            .as_ref()
+            .ok_or("upload lost its raster")?
+            .pixels;
         let resource = ContentResourceId {
             id: if pending.resource.id == 0 {
                 self.next_resource
@@ -190,7 +265,11 @@ impl<R: ContentRenderer> ShellService<R> {
         &mut self,
         pending: &mut PendingPresentation,
     ) -> Result<bool, String> {
-        let pixels = &pending.content.pixels;
+        let pixels = &pending
+            .content
+            .as_ref()
+            .ok_or("upload lost its raster")?
+            .pixels;
         let chunk_count = pixels
             .chunks(self.limits.max_frame_payload, self.limits.max_chunk_bytes)?
             .count() as u32;
@@ -252,6 +331,7 @@ impl<R: ContentRenderer> ShellService<R> {
             return Err(format!("resource was rejected: {}", status.reason));
         }
         self.panels[pending.panel].resources[pending.slot_index].state = ResourceState::Resident;
+        pending.content = None;
         pending.phase = PresentationPhase::ResourceAccepted;
         self.advance_demand_enqueue(pending)
     }
@@ -309,7 +389,7 @@ impl<R: ContentRenderer> ShellService<R> {
             pending.resource,
             candidate,
             pending.permit.clone().ok_or("candidate lost its permit")?,
-            &pending.content.targets,
+            &pending.targets,
         )? {
             return Ok(false);
         }
@@ -341,7 +421,8 @@ impl<R: ContentRenderer> ShellService<R> {
             model: pending.model.clone(),
             candidate_generation: pending.candidate,
             presentation_epoch: outcome.presentation_epoch,
-            targets: pending.content.targets.clone(),
+            targets: pending.targets.clone(),
+            raster: pending.raster,
         });
         Ok(())
     }
@@ -408,27 +489,33 @@ impl<R: ContentRenderer> ShellService<R> {
 
     fn finish_presentation(&mut self, pending: PendingPresentation) -> Result<(), String> {
         let panel = &mut self.panels[pending.panel];
-        let pixels = &pending.content.pixels;
+        let raster = pending.raster;
         let indicator_generation = pending.indicator_revision;
         println!(
-            "lom_panel_candidate schema=1 status=presented connection_epoch={} content_grant_epoch={} output={} candidate_generation={} presentation_epoch={} indicator_generation={} width={} height={} bytes={} checksum={:016x}",
+            "lom_panel_candidate schema=1 status=presented connection_epoch={} content_grant_epoch={} output={} candidate_generation={} presentation_epoch={} indicator_generation={} width={} height={} bytes={} checksum={:016x} raster_source={}",
             self.limits.grant.connection_epoch,
             self.limits.grant.content_grant_epoch,
             panel.output.output.id,
             pending.candidate,
             pending.presentation_epoch,
             indicator_generation,
-            pixels.width(),
-            pixels.height(),
-            pixels.bytes().len(),
-            pixel_checksum(pixels.bytes()),
+            raster.width,
+            raster.height,
+            raster.bytes,
+            raster.checksum,
+            if pending.raster_reused {
+                "reused"
+            } else {
+                "rendered"
+            },
         );
         panel.current_slot = Some(pending.slot_index);
         panel.presented = Some(PresentedPanel {
             model: pending.model,
             candidate_generation: pending.candidate,
             presentation_epoch: pending.presentation_epoch,
-            targets: pending.content.targets,
+            targets: pending.targets,
+            raster: pending.raster,
         });
         Ok(())
     }

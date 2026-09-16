@@ -279,3 +279,74 @@ fn workspace_targets_come_from_the_same_masonry_layout_as_pixels() {
             if indicator == target.indicator && action == target.action
     )));
 }
+
+#[test]
+fn revision_only_retarget_keeps_pixels_geometry_and_old_messages() {
+    let old = support::model();
+    let mut driver = PreviewDriver::new(old.clone(), 1000, 24, 1.0, false).unwrap();
+    let (_, original) = driver.scene_and_targets();
+    assert!(!original.is_empty());
+    let before = raster(&mut driver);
+    let mut latest = old.clone();
+    latest.workspaces.generation += 1;
+    latest.workspaces.active_output = Some(999);
+    let rebound = lom::ui::retarget_unchanged_panel(&old, &latest, &original).unwrap();
+    assert_eq!(rebound.len(), original.len());
+    for (prior, next) in original.iter().zip(&rebound) {
+        assert_eq!(
+            (prior.x, prior.y, prior.width, prior.height),
+            (next.x, next.y, next.width, next.height)
+        );
+        assert_eq!(prior.generation, old.workspaces.generation);
+        assert_eq!(next.generation, latest.workspaces.generation);
+        assert!(
+            matches!(prior.message, Msg::ActivateWorkspace { generation, .. } if generation == old.workspaces.generation)
+        );
+    }
+    driver.reconcile_model(latest.clone());
+    assert_eq!(before, raster(&mut driver));
+    assert_eq!(rebound, driver.scene_and_targets().1);
+    // Labels and activation availability affect actual layout/widget shape.
+    let shown = latest
+        .workspaces
+        .entries
+        .iter()
+        .position(|entry| entry.output == latest.output)
+        .unwrap();
+    latest.workspaces.entries[shown].name.push_str("changed");
+    assert!(lom::ui::retarget_unchanged_panel(&old, &latest, &original).is_none());
+    latest = old.clone();
+    latest.workspaces.entries[shown].action = None;
+    assert!(lom::ui::retarget_unchanged_panel(&old, &latest, &original).is_none());
+}
+
+#[test]
+fn local_visual_invalidation_matches_real_pixels_and_all_monitors_filter() {
+    let mut old = support::model();
+    let mut remote = old.workspaces.entries[0].clone();
+    remote.output = old.output + 1;
+    remote.id += 100;
+    remote.name = "remote".into();
+    old.workspaces.entries.push(remote);
+    let mut latest = old.clone();
+    let foreign = latest
+        .workspaces
+        .entries
+        .iter()
+        .position(|entry| entry.output != old.output)
+        .unwrap();
+    latest.workspaces.entries[foreign].urgent = !latest.workspaces.entries[foreign].urgent;
+    latest.workspaces.generation += 1;
+    assert!(lom::modules::same_panel_pixels(&old, &latest));
+    let mut a = PreviewDriver::new(old.clone(), 1000, 24, 1.0, false).unwrap();
+    let mut b = PreviewDriver::new(latest.clone(), 1000, 24, 1.0, false).unwrap();
+    assert_eq!(raster(&mut a), raster(&mut b));
+    let mut all = old.clone();
+    for module in &mut all.config.modules {
+        if module.kind == lom::config::ModuleKind::Workspaces {
+            module.all_monitors = true;
+        }
+    }
+    latest.config = all.config.clone();
+    assert!(!lom::modules::same_panel_pixels(&all, &latest));
+}

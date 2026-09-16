@@ -81,6 +81,7 @@ struct Panel {
     allocation: ContentAllocationResult,
     model: Model,
     dirty: bool,
+    interaction_dirty: bool,
     current_slot: Option<usize>,
     presented: Option<PresentedPanel>,
     resources: [ResourceSlot; 2],
@@ -92,6 +93,15 @@ struct PresentedPanel {
     candidate_generation: u64,
     presentation_epoch: u64,
     targets: Vec<ContentTargetLayout>,
+    raster: RasterSummary,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RasterSummary {
+    width: u32,
+    height: u32,
+    bytes: usize,
+    checksum: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -288,6 +298,7 @@ impl<R: ContentRenderer> ShellService<R> {
                 allocation,
                 model,
                 dirty: true,
+                interaction_dirty: true,
                 current_slot: None,
                 presented: None,
                 resources: [ResourceSlot {
@@ -320,9 +331,12 @@ impl<R: ContentRenderer> ShellService<R> {
             self.latest_indicators = Some(snapshot.clone());
             let workspaces = workspace_snapshot(&snapshot);
             for panel in &mut self.panels {
-                panel.model.workspaces = workspaces.clone();
-                panel.model.epoch = workspaces.epoch;
-                panel.dirty = true;
+                let mut next = panel.model.clone();
+                next.workspaces = workspaces.clone();
+                next.epoch = workspaces.epoch;
+                panel.dirty |= !crate::modules::same_panel_pixels(&panel.model, &next);
+                panel.interaction_dirty |= panel.model.workspaces != next.workspaces;
+                panel.model = next;
             }
         }
         for _ in 0..MAX_OBSERVATIONS_PER_TURN {

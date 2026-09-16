@@ -33,6 +33,8 @@ use std::{
 
 #[path = "support/service_multiplex.rs"]
 mod service_multiplex;
+#[path = "support/service_refresh.rs"]
+mod service_refresh;
 
 static SOCKET_ID: AtomicU64 = AtomicU64::new(1);
 const GRANT: ContentGrant = ContentGrant {
@@ -271,19 +273,26 @@ fn serve_two_outputs(
     done: std::sync::mpsc::Receiver<()>,
     drained: std::sync::mpsc::Sender<()>,
 ) {
+    let expected = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
+        | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
+        | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS;
+    initialize_two_outputs(&mut stream, expected);
+    service_multiplex::exchange(&mut stream);
+    drained.send(()).unwrap();
+    done.recv_timeout(Duration::from_secs(2)).unwrap();
+}
+
+fn initialize_two_outputs(stream: &mut UnixStream, expected: u64) {
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
-    let hello = read_frame(&mut stream);
+    let hello = read_frame(stream);
     let ShellV1ClientHello {
         minimum_revision,
         maximum_revision,
         required_capabilities,
     } = decode_shell_v1_client_hello_frame(&hello).unwrap();
     assert_eq!((minimum_revision, maximum_revision), (6, 6));
-    let expected = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
-        | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
-        | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS;
     assert_eq!(required_capabilities, expected);
     stream
         .write_all(
@@ -299,12 +308,12 @@ fn serve_two_outputs(
         )
         .unwrap();
     send(
-        &mut stream,
+        stream,
         0,
         ShellContentRecord::Limits(sophia_protocol::ContentLimits::prototype(GRANT)),
     );
     send(
-        &mut stream,
+        stream,
         2,
         ShellContentRecord::OutputFacts(ContentOutputFacts {
             grant: GRANT,
@@ -324,8 +333,7 @@ fn serve_two_outputs(
     );
     let mut allocations = Vec::new();
     for (index, output) in [OUTPUT, SECOND_OUTPUT].into_iter().enumerate() {
-        let (transaction, ShellContentRecord::AllocationRequest(request)) = receive(&mut stream)
-        else {
+        let (transaction, ShellContentRecord::AllocationRequest(request)) = receive(stream) else {
             panic!("expected allocation request");
         };
         assert_eq!(request.output, output);
@@ -335,7 +343,7 @@ fn serve_two_outputs(
         };
         allocations.push(allocation);
         send_tx(
-            &mut stream,
+            stream,
             transaction,
             ShellContentRecord::AllocationResult(ContentAllocationResult {
                 grant: GRANT,
@@ -366,9 +374,6 @@ fn serve_two_outputs(
             }),
         );
     }
-    service_multiplex::exchange(&mut stream);
-    drained.send(()).unwrap();
-    done.recv_timeout(Duration::from_secs(2)).unwrap();
 }
 
 fn serve_one(

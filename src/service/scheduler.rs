@@ -32,6 +32,11 @@ impl<R: ContentRenderer> ShellService<R> {
             let presentation = self.presentations.remove(0);
             presented += usize::from(self.advance_presentation(presentation)?);
         }
+        // Interaction-only candidates do not need the GPU worker or a free
+        // upload slot; they retain the exact current immutable raster.
+        for index in 0..self.panels.len() {
+            self.refresh_interaction(index)?;
+        }
         if let Some(index) = self.rendering_panel
             && let Some(content) = self.renderer.poll()?
         {
@@ -63,6 +68,7 @@ impl<R: ContentRenderer> ShellService<R> {
                     scale,
                 )?;
                 panel.dirty = false;
+                panel.interaction_dirty = false;
                 self.rendering_panel = Some(index);
                 self.next_panel = (index + 1) % count;
                 break;

@@ -304,6 +304,37 @@ fn button_meanings(model: &Model) -> Vec<Option<(Msg, u64, u64, u64)>> {
     meanings
 }
 
+/// Reuse exact layout geometry only when the same resolved visual tree remains.
+/// Publication authority is carried by a new candidate, never installed here.
+pub fn retarget_unchanged_panel(
+    old: &Model,
+    new: &Model,
+    previous: &[ContentTargetLayout],
+) -> Option<Vec<ContentTargetLayout>> {
+    if !crate::modules::same_panel_pixels(old, new) {
+        return None;
+    }
+    let meanings: Vec<_> = button_meanings(new).into_iter().flatten().collect();
+    if meanings.len() != previous.len() {
+        return None;
+    }
+    Some(
+        previous
+            .iter()
+            .zip(meanings)
+            .map(
+                |(layout, (message, indicator, action, generation))| ContentTargetLayout {
+                    message,
+                    indicator,
+                    action,
+                    generation,
+                    ..layout.clone()
+                },
+            )
+            .collect(),
+    )
+}
+
 fn trim_snapped_overlap(targets: &mut [ContentTargetLayout], vertical: bool) {
     for index in 1..targets.len() {
         let (before, after) = targets.split_at_mut(index);

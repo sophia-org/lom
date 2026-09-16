@@ -256,7 +256,13 @@ unbounded presentation clock. Use negotiated pacing and a bounded renderer
 schedule. The runtime has one capacity-one GPU worker separate from
 protocol/control progress; it exchanges owned requests and completions with the
 TEA runtime. Dirty work is coalesced per output and unchanged resources are
-reused. GPU completion is polled without blocking protocol intake. An expired
+reused. Visual invalidation uses the same module filtering, labels and colors
+as the view. A new interaction revision with identical visual/layout inputs
+reuses the resident immutable raster in a new paced candidate, without GPU
+rendering or pixel upload. Its target meanings become current only at that
+candidate's Presented; the previous presented bindings remain unchanged until
+then. Resource retirement follows replacement of the raster, not merely a
+change in the candidate identity. GPU completion is polled without blocking protocol intake. An expired
 job remains quarantined and fails the service rather than allowing its resources
 to be silently reused.
 
