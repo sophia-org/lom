@@ -9,9 +9,22 @@ migration exceptions are not imported into this new client project.
 
 ## Languages and layout
 
-Use Rust for the shell and reusable client libraries. Small Python or shell
-tools may implement repository checks; other languages need a concrete boundary
-reason. Do not mix languages inside a component without that reason.
+Use Rust for the shell, reusable client libraries and new maintained repository
+tooling. Prefer an `xtask` entry point for test harnesses, isolation orchestration,
+protocol validation, evidence collection and release automation. This is the
+direction for new tooling, not a claim that the current gate uses xtask.
+
+Use shell for short launchers and straightforward command sequences, and Python
+for disposable analysis or experiments. Prefer direct patches for source edits;
+use scripted transformations when their repetition warrants it and inspect the
+diff. Other languages need a concrete boundary reason, including independent
+protocol interoperability checks.
+
+Keep existing tools working and migrate recurring Python or complex shell code
+incrementally when changing its owning domain. Do not delay the dock for a bulk
+rewrite. Preserve device-hidden execution, fail-closed prerequisites, timeouts,
+evidence formats and negative controls; prove equivalent behavior before replacing
+a gate. A migration never authorizes hardware autodetection or live-session access.
 
 Group source by ownership: passive types, state tables, updates, protocol,
 runtime effects, UI adaptation, rendering, and modules. These are responsibilities,

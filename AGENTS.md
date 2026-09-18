@@ -13,6 +13,9 @@ presentation, permission, and source-layout rules apply to this repository.
   source-length checks, formatting, Rust tests, and strict Clippy.
 - Keep compiler and Clippy output warning-free. Never weaken a check merely to
   make a change pass.
+- Follow the style guide's tooling policy: Rust/xtask for new maintained tools,
+  shell for simple launchers, Python for disposable analysis. Migrate existing
+  tooling incrementally while preserving isolation and negative controls.
 - GPU access, protocol extensions, installation, and native-session tests need
   their separately authorized designs or runs; an offline pass is not native
   acceptance.
