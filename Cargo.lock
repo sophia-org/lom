@@ -1856,12 +1856,12 @@ checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
 [[package]]
 name = "sophia-protocol"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia-stack?rev=2e569301bc803cdcdcc234097b84f724e5296f23#2e569301bc803cdcdcc234097b84f724e5296f23"
+source = "git+https://github.com/sophia-org/sophia?rev=2e569301bc803cdcdcc234097b84f724e5296f23#2e569301bc803cdcdcc234097b84f724e5296f23"
 
 [[package]]
 name = "sophia-shell-client"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia-stack?rev=2e569301bc803cdcdcc234097b84f724e5296f23#2e569301bc803cdcdcc234097b84f724e5296f23"
+source = "git+https://github.com/sophia-org/sophia?rev=2e569301bc803cdcdcc234097b84f724e5296f23#2e569301bc803cdcdcc234097b84f724e5296f23"
 dependencies = [
  "sophia-protocol",
 ]

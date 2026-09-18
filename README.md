@@ -1,6 +1,6 @@
 # lom
 
-An original native desktop shell for [Sophia](https://github.com/sophia-org/sophia-stack).
+An original native desktop shell for [Sophia](https://github.com/sophia-org/sophia).
 **Лом** (*lom*) is Russian for a crowbar or heavy iron bar.
 
 Lom brings ironbar-inspired panels, modules and popouts to a Rust UI built from

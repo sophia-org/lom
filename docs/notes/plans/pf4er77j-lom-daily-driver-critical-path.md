@@ -38,7 +38,7 @@ candidates. The first useful panel must not wait for those architectures.
 
 ## Ordering and paired ownership
 
-Sophia owns the [server critical path](https://github.com/sophia-org/sophia-stack/blob/master/docs/notes/plans/1m3z9q0j-lom-and-sophia-portable-gpu-shell-critical-path.md).
+Sophia owns the [server critical path](https://github.com/sophia-org/sophia/blob/master/docs/notes/plans/1m3z9q0j-lom-and-sophia-portable-gpu-shell-critical-path.md).
 Task IDs are repository-local: `depends:` names local tasks and
 `peer:sophia/tNNN` names paired work. A peer's completion does not close this
 repository's task. Both sides may cite one exact integration evidence record
@@ -369,8 +369,8 @@ in Sophia, private display or mandatory shell API is implied by this task.
 [adoption ADR](../decisions/1qikt1av-use-explicit-gpu-permission-with-renderer-neutral-sophia-presentation.md)
 and [configuration](../../configuration.md) own client constraints.
 [Minimal evidence](../../minimal-port.md) preserves existing results.
-[Sophia's paired plan](https://github.com/sophia-org/sophia-stack/blob/master/docs/notes/plans/1m3z9q0j-lom-and-sophia-portable-gpu-shell-critical-path.md)
-owns server exits; [its decision](https://github.com/sophia-org/sophia-stack/blob/master/docs/notes/decisions/mn4mzcnf-separate-shell-presentation-from-gpu-execution-permission.md)
+[Sophia's paired plan](https://github.com/sophia-org/sophia/blob/master/docs/notes/plans/1m3z9q0j-lom-and-sophia-portable-gpu-shell-critical-path.md)
+owns server exits; [its decision](https://github.com/sophia-org/sophia/blob/master/docs/notes/decisions/mn4mzcnf-separate-shell-presentation-from-gpu-execution-permission.md)
 owns GPU/presentation policy. [Active tasks](../../../todo.md) own local status.
 
 ## 2026-09-16 workspace ownership repair

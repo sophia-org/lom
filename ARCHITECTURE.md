@@ -380,12 +380,12 @@ an offline passing test.
 
 Sophia authority and lifecycle contracts:
 
-- [Data-oriented design](https://github.com/sophia-org/sophia-stack/blob/master/docs/dod.md)
-- [Content shells](https://github.com/sophia-org/sophia-stack/blob/master/docs/content-shell.md)
-- [Target-resolved input](https://github.com/sophia-org/sophia-stack/blob/master/docs/target-resolved-input.md)
-- [Compositor graphics](https://github.com/sophia-org/sophia-stack/blob/master/docs/compositor-graphics.md)
-- [Accepted presentation/execution decision](https://github.com/sophia-org/sophia-stack/blob/master/docs/notes/decisions/mn4mzcnf-separate-shell-presentation-from-gpu-execution-permission.md)
-- [Initial CPU content ADR](https://github.com/sophia-org/sophia-stack/blob/master/docs/notes/decisions/6ndjwffd-content-capability-design-for-sophia_shell_v1.md)
+- [Data-oriented design](https://github.com/sophia-org/sophia/blob/master/docs/dod.md)
+- [Content shells](https://github.com/sophia-org/sophia/blob/master/docs/content-shell.md)
+- [Target-resolved input](https://github.com/sophia-org/sophia/blob/master/docs/target-resolved-input.md)
+- [Compositor graphics](https://github.com/sophia-org/sophia/blob/master/docs/compositor-graphics.md)
+- [Accepted presentation/execution decision](https://github.com/sophia-org/sophia/blob/master/docs/notes/decisions/mn4mzcnf-separate-shell-presentation-from-gpu-execution-permission.md)
+- [Initial CPU content ADR](https://github.com/sophia-org/sophia/blob/master/docs/notes/decisions/6ndjwffd-content-capability-design-for-sophia_shell_v1.md)
 
 Library boundaries inspected for this design on 2026-09-12 (these links track
 upstream branches; they are not dependency pins):
