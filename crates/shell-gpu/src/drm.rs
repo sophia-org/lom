@@ -56,5 +56,5 @@ fn identity_from_properties(
 }
 
 #[cfg(test)]
-#[path = "../../tests/support/render_drm.rs"]
+#[path = "../tests/support/render_drm.rs"]
 mod tests;

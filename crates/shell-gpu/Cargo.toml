@@ -1,0 +1,19 @@
+[package]
+name = "sophia-shell-gpu"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96.1"
+license = "BSD-3-Clause"
+description = "Explicit client-side GPU admission and bounded Vello readback"
+publish = false
+
+[lints.rust]
+missing_docs = "warn"
+
+[dependencies]
+imaging = "0.0.1"
+masonry_imaging = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849def6eeab282561439b963862e5", default-features = false, features = ["imaging_vello"] }
+wgpu = { version = "28.0", default-features = false, features = ["vulkan", "wgsl", "std", "parking_lot"] }
+ash = { version = "0.38", default-features = false }
+pollster = "0.4"
+rustix = { version = "1.1", features = ["fs"] }

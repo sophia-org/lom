@@ -30,13 +30,13 @@ impl PendingReadback {
         let padded_row_bytes = row_bytes.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Lom bounded GPU readback"),
+            label: Some("Shell bounded GPU readback"),
             size: u64::from(padded_row_bytes) * u64::from(height),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Lom readback copy"),
+            label: Some("Shell readback copy"),
         });
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {

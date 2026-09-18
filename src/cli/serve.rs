@@ -49,7 +49,7 @@ pub(super) fn run() -> Result<(), String> {
     .map_err(|error| format!("shell negotiation failed: {error}"))?;
     let grant = GpuGrant::from_environment(connection.connection_epoch())?;
     let (renderer, admission) = RendererWorker::start(grant)?;
-    println!("{}", admission.record());
+    println!("{}", admission.record("lom")?);
     let mut service = ShellService::new(connection, config, theme, allowance, renderer)?;
     loop {
         if service.step()? == 0 {

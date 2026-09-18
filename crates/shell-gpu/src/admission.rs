@@ -240,5 +240,5 @@ pub(super) fn select_adapter(
 }
 
 #[cfg(test)]
-#[path = "../../tests/support/render_admission.rs"]
+#[path = "../tests/support/render_admission.rs"]
 mod tests;

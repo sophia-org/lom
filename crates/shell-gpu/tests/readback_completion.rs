@@ -1,5 +1,5 @@
 //! Exercise the production deadline function without opening a GPU.
-#[path = "../src/render/completion.rs"]
+#[path = "../src/completion.rs"]
 mod completion;
 use std::sync::mpsc;
 use std::time::Duration;

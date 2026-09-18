@@ -1089,18 +1089,15 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 name = "lom"
 version = "0.1.0"
 dependencies = [
- "ash",
  "chrono",
  "image",
  "imaging_vello_cpu",
  "kdl",
  "masonry",
- "masonry_imaging",
  "masonry_testing",
- "pollster",
- "rustix",
  "sophia-protocol",
  "sophia-shell-client",
+ "sophia-shell-gpu",
  "tokio",
  "wgpu",
  "xilem_masonry",
@@ -1864,6 +1861,18 @@ version = "0.1.0"
 source = "git+https://github.com/sophia-org/sophia?rev=2e569301bc803cdcdcc234097b84f724e5296f23#2e569301bc803cdcdcc234097b84f724e5296f23"
 dependencies = [
  "sophia-protocol",
+]
+
+[[package]]
+name = "sophia-shell-gpu"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "imaging",
+ "masonry_imaging",
+ "pollster",
+ "rustix",
+ "wgpu",
 ]
 
 [[package]]

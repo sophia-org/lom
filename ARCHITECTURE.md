@@ -9,6 +9,13 @@ actions; popouts and native GPU/input acceptance remain incomplete. See
 Implementation must follow the [style guide](docs/style-guide.md), including
 source-layout checks, test placement, logging, and warning discipline.
 
+The client-side `crates/shell-gpu` library now owns exact DRM grant selection,
+Vello GPU initialization and bounded readback, shared with Provlita. It contains
+no Sophia server or shell protocol dependency. Lom retains its scene/pixel
+facade, retained Xilem hosts and protocol worker. The extracted admission and
+deadline controls run as workspace tests. This is reuse of the rendering owner,
+not a new GPU permission, native transport or server rendering dependency.
+
 Lom is an original native shell for Sophia. Ironbar inspires the product:
 configurable panels, useful modules, flexible styling, and rich popouts. Lom
 aims to preserve familiar ironbar appearance, features and configuration

@@ -80,14 +80,7 @@ impl RendererWorker {
             .spawn(move || {
                 let mut renderer = match GpuPreview::new(&grant) {
                     Ok(renderer) => {
-                        let evidence = renderer
-                            .adapter_drm()
-                            .ok_or_else(|| {
-                                "admitted Vulkan renderer omitted DRM identity".to_owned()
-                            })
-                            .and_then(|drm| {
-                                GpuAdmissionEvidence::collect(&grant, renderer.adapter(), drm)
-                            });
+                        let evidence = renderer.evidence(&grant);
                         if ready.send(evidence).is_err() {
                             return;
                         }
