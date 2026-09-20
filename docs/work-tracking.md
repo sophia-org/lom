@@ -21,7 +21,7 @@ decisions. The task files own status and order; notes must not copy the queue.
 - Every open task has exactly one lane: `+critical`, `+parallel`, `+candidate`,
   or `+deferred`.
 - Context is `@development`, `@physical`, or `@planning`.
-- `id:tNNN` is stable and unique across open and completed task files.
+- `id:tNNN` is stable and unique across open and completed task files. **Identities are never recycled.** A new task takes the next number above every `id:` that has ever been used, in `todo.md` and in the `done-*.md` files together -- not the lowest number that happens to be free. A completed task keeps its identity for ever, and the evidence that closed it is reached by that identity: notes, commit messages and gate reports all cite it. Giving a new task an old number silently re-points every one of those citations at work it never described. Two live rows sharing a number is the visible failure; the quiet one is worse.
 - `order:NNN` is the reviewed execution order (decimal insertion keys are allowed).
   Use the lowest critical order
   unless the operator selects another scope.
