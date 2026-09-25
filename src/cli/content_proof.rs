@@ -1,3 +1,4 @@
+mod lifecycle;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -13,9 +14,14 @@ use sophia_shell_client::{ShellClientOptions, ShellConnection};
 
 use crate::protocol::ContentPixels;
 
-pub(super) fn run(socket: PathBuf) -> Result<(), String> {
-    let capabilities =
-        SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE;
+pub(super) fn run(socket: PathBuf, full_lifecycle: bool) -> Result<(), String> {
+    let capabilities = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
+        | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
+        | if full_lifecycle {
+            sophia_protocol::SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
+        } else {
+            0
+        };
     let mut connection = ShellConnection::connect(
         socket,
         ShellClientOptions {
@@ -51,7 +57,7 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
             parent_presentation_epoch: 0,
             anchor_parent_rect: ContentPixelRect::default(),
             desired_width: output.local_width,
-            desired_height: 32,
+            desired_height: if full_lifecycle { 16 } else { 32 },
             margins: ContentMargins::default(),
         }),
     )?;
@@ -62,7 +68,7 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
         || allocation.reason != ContentReason::None as u16
         || allocation.output != output.output
         || allocation.logical.width != output.local_width
-        || allocation.logical.height != 32
+        || allocation.logical.height != if full_lifecycle { 16 } else { 32 }
     {
         return Err("panel allocation was not granted with the requested dimensions".into());
     }
@@ -206,16 +212,22 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
             record,
         )?;
     }
-    let ShellContentRecord::CandidateOutcome(outcome) = receive(&mut connection)? else {
-        return Err("candidate did not receive a terminal outcome".into());
-    };
-    if outcome.candidate_generation != 1
-        || outcome.output != permit.output
-        || outcome.kind != 3
-        || outcome.reason != ContentReason::RendererFailed as u16
-        || outcome.presentation_epoch != 0
-    {
-        return Err("headless candidate did not take the exact renderer-failure outcome".into());
+    if full_lifecycle {
+        lifecycle::finish(&mut connection, &limits, &facts, &allocation, resource)?;
+    } else {
+        let ShellContentRecord::CandidateOutcome(outcome) = receive(&mut connection)? else {
+            return Err("candidate did not receive a terminal outcome".into());
+        };
+        if outcome.candidate_generation != 1
+            || outcome.output != permit.output
+            || outcome.kind != 3
+            || outcome.reason != ContentReason::RendererFailed as u16
+            || outcome.presentation_epoch != 0
+        {
+            return Err(
+                "headless candidate did not take the exact renderer-failure outcome".into(),
+            );
+        }
     }
     send(
         &mut connection,
@@ -232,10 +244,14 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
         return Err("resource release identity or reason changed".into());
     }
     println!(
-        "lom_content_transport schema=1 status=complete revision={} allocation=granted bytes={} resource=1/1 candidate=accepted renderer_outcome={} native_presentation=false",
+        "lom_content_transport schema=1 status=complete revision={} allocation=granted bytes={} resource=1/1 candidate=accepted outcome={} native_presentation=false",
         connection.welcome().selected_revision,
         pixels.bytes().len(),
-        ContentReason::RendererFailed as u16,
+        if full_lifecycle {
+            "presented_four_candidates"
+        } else {
+            "renderer_failed"
+        },
     );
     Ok(())
 }

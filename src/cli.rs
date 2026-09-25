@@ -15,7 +15,7 @@ use std::{
 };
 
 /// Help displayed without loading configuration, fonts or a GPU.
-pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n       lom content-proof --socket FILE\n       lom --serve\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\ncontent-proof exercises fixed diagnostic pixels over an explicitly admitted Sophia socket; it does not present a panel.\n--serve is the persistent protected Sophia content-shell entry point.\n";
+pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n       lom content-proof --socket FILE\n       lom content-lifecycle --socket FILE\n       lom --serve\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\ncontent-proof exercises fixed diagnostic pixels over an explicitly admitted Sophia socket; it does not present a panel.\ncontent-lifecycle checks diagnostic panel/popout transitions against an explicitly supplied conformance host; it does not open a GPU.\n--serve is the persistent protected Sophia content-shell entry point.\n";
 
 /// Run one diagnostic command; the caller prints any returned boundary failure.
 pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
@@ -32,7 +32,7 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
     };
     let allowed = match command {
         "check-config" => &["--config", "--theme"][..],
-        "content-proof" => &["--socket"][..],
+        "content-proof" | "content-lifecycle" => &["--socket"][..],
         "--serve" => &[][..],
         "preview" => &[
             "--config",
@@ -45,8 +45,11 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
         _ => return Err("unsupported arguments; use --help".into()),
     };
     let options = options(&arguments[1..], allowed)?;
-    if command == "content-proof" {
-        return content_proof::run(required(&options, "--socket")?);
+    if command == "content-proof" || command == "content-lifecycle" {
+        return content_proof::run(
+            required(&options, "--socket")?,
+            command == "content-lifecycle",
+        );
     }
     if command == "--serve" {
         return serve::run();

@@ -168,6 +168,20 @@ Exit: deterministic tests cover open, navigation/action, replacement,
 dismissal/timeout, placement rejection, parent/epoch loss and retirement,
 including fractional scaling. No local popup intent is recorded as visibility.
 
+The 2026-09-25 `content-lifecycle --socket` diagnostic supplies Sophia t099's
+paired wire acceptance without opening a GPU. It requests a panel and a popout
+bound to an actual host receipt, checks stale-parent refusal, submits four
+complete candidates, acknowledges an exact popup action and coordinate-free
+outside dismissal, and checks parent loss followed by exact resource release.
+Sophia's protected test host uses production projection/composition owners with
+explicitly simulated device completions. Both Lom and the independent C peer
+pass, and both disconnect without acknowledging a deliberately wrong action
+epoch. `tools/check.sh` passes. Evidence is retained in the Sophia development
+worktree's `.artifacts/t099-lom-{build,check,lifecycle}.log` and
+`.artifacts/t099-shell-protocol.log`. This diagnostic does not implement the
+calendar service's live allocation ownership and does not close t005 or prove
+native presentation.
+
 ### t006
 
 The September 15 lifecycle checkpoint retains one Xilem/Masonry host per exact
