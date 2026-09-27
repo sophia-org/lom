@@ -1,5 +1,6 @@
 //! Persistent, display-independent Sophia content lifecycle.
 
+mod custody;
 mod presentation;
 mod scheduler;
 mod target_generations;
@@ -12,22 +13,28 @@ use crate::{
     ui::ContentTargetLayout,
 };
 use chrono::{DateTime, FixedOffset, Utc};
-use sophia_protocol::{
+use sophia_shell_client::{ContentActionDispatch, ContentLifecycle, ShellConnection};
+use sophia_shell_protocol::{
     ContentAction, ContentActionAck, ContentAllocationId, ContentAllocationRequest,
     ContentAllocationResult, ContentCandidateBegin, ContentCandidateChunk, ContentCandidateEnd,
     ContentFrameDemand, ContentFramePermit, ContentMargins, ContentOutputFacts,
     ContentOutputFactsEntry, ContentPixelRect, ContentPlacement, ContentReason,
     ContentResourceBegin, ContentResourceChunk, ContentResourceEnd, ContentResourceId,
-    ContentResourceRetire, ContentSurface, ContentTarget, POLICY_INDICATOR_STATE_ACTIVE,
-    POLICY_INDICATOR_STATE_URGENT, POLICY_INDICATOR_STATE_VISIBLE_ELSEWHERE, ShellContentRecord,
+    ContentResourceRetire, ContentSurface, ContentTarget, ShellContentRecord,
     ShellIndicatorActivation, ShellIndicatorActivationStatus, ShellIndicatorSnapshot,
     TransactionId,
 };
-use sophia_shell_client::{ContentActionDispatch, ContentLifecycle, ShellConnection};
 use std::{
     collections::{BTreeSet, VecDeque},
     time::{Duration, Instant, SystemTime},
 };
+
+// Preserve the r6 indicator mapping from Sophia@2e569301's
+// crates/sophia-protocol/src/packets/policy.rs. The standalone shell SDK carries
+// state_bits but does not currently export names for these bits.
+const INDICATOR_ACTIVE: u16 = 1;
+const INDICATOR_URGENT: u16 = 2;
+const INDICATOR_VISIBLE_ELSEWHERE: u16 = 8;
 
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
 const IDLE_POLL: Duration = Duration::from_millis(4);
@@ -52,9 +59,9 @@ pub struct RenderedContent {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RenderIdentity {
     /// Admitted connection and content grant.
-    pub grant: sophia_protocol::ContentGrant,
+    pub grant: sophia_shell_protocol::ContentGrant,
     /// Logical output and its topology generation.
-    pub output: sophia_protocol::ContentOutputId,
+    pub output: sophia_shell_protocol::ContentOutputId,
     /// Engine-owned allocation and generation.
     pub allocation: ContentAllocationId,
     /// Scale identity from the acknowledged allocation.
@@ -129,10 +136,11 @@ enum ResourceState {
 /// supplied renderer owns toolkit/GPU policy and returns immutable wire pixels.
 pub struct ShellService<R> {
     connection: ShellConnection,
+    custody: custody::CustodyWatch,
     config: PanelConfig,
     theme: Theme,
     renderer: R,
-    limits: sophia_protocol::ContentLimits,
+    limits: sophia_shell_protocol::ContentLimits,
     facts: ContentOutputFacts,
     panels: Vec<Panel>,
     next_transaction: u64,
@@ -187,6 +195,7 @@ impl<R: ContentRenderer> ShellService<R> {
             .map_err(|error| format!("initial output facts: {error:?}"))?;
         let mut service = Self {
             connection,
+            custody: Default::default(),
             config,
             theme,
             renderer,
@@ -219,6 +228,18 @@ impl<R: ContentRenderer> ShellService<R> {
     pub fn step(&mut self) -> Result<usize, String> {
         self.service_turn()
     }
+
+    /// Maximum idle sleep before servicing queued work or an SDK retry.
+    /// The caller still calls `step` after any incoming observations.
+    pub fn idle_wait(&self) -> Duration {
+        self.connection
+            .wake_deadline()
+            .map_or(IDLE_POLL, |deadline| {
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(IDLE_POLL)
+            })
+    }
     fn transaction(&mut self) -> Result<TransactionId, String> {
         let value = self.next_transaction;
         self.next_transaction = value
@@ -229,8 +250,7 @@ impl<R: ContentRenderer> ShellService<R> {
 
     fn send(&mut self, record: ShellContentRecord) -> Result<(), String> {
         let transaction = self.transaction()?;
-        self.connection
-            .enqueue_content(transaction, &record)
+        self.enqueue_content(transaction, &record)
             .map_err(|error| format!("content send failed: {error}"))
     }
 
@@ -317,9 +337,11 @@ impl<R: ContentRenderer> ShellService<R> {
     }
 
     fn observe(&mut self) -> Result<(), String> {
+        self.custody.observe(&self.connection)?;
         self.connection
             .poll_io()
             .map_err(|error| format!("shell I/O: {error}"))?;
+        self.custody.observe(&self.connection)?;
         for _ in 0..MAX_OBSERVATIONS_PER_TURN {
             let Some((_, snapshot)) = self
                 .connection
@@ -496,18 +518,17 @@ impl<R: ContentRenderer> ShellService<R> {
         let activation = ShellIndicatorActivation {
             connection_epoch: self.connection.connection_epoch(),
             snapshot_generation: publication.unwrap_or(0),
-            output: sophia_protocol::OutputId::from_raw(action.output.id),
+            output: sophia_shell_protocol::OutputId::from_raw(action.output.id),
             indicator: action.target_id,
             action: action.action_id,
             event_id: action.event_id,
         };
-        self.connection
-            .enqueue_indicator_action_response(
-                ack_transaction,
-                &ack,
-                accepted.then_some((activation_transaction, &activation)),
-            )
-            .map_err(|error| format!("action response admission: {error}"))?;
+        self.enqueue_action_response(
+            ack_transaction,
+            &ack,
+            accepted.then_some((activation_transaction, &activation)),
+        )
+        .map_err(|error| format!("action response admission: {error}"))?;
         if !accepted {
             return Ok(());
         }
@@ -525,7 +546,7 @@ impl<R: ContentRenderer> ShellService<R> {
             if Instant::now() >= deadline {
                 return Err("shell content response timed out".into());
             }
-            std::thread::sleep(IDLE_POLL);
+            std::thread::sleep(self.idle_wait());
         }
     }
 }
@@ -562,9 +583,9 @@ fn workspace_snapshot(snapshot: &ShellIndicatorSnapshot) -> WorkspaceSnapshot {
                 id: entry.indicator,
                 output: entry.output.raw(),
                 name: entry.label.clone(),
-                active: entry.state_bits & POLICY_INDICATOR_STATE_ACTIVE != 0,
-                visible: entry.state_bits & POLICY_INDICATOR_STATE_VISIBLE_ELSEWHERE != 0,
-                urgent: entry.state_bits & POLICY_INDICATOR_STATE_URGENT != 0,
+                active: entry.state_bits & INDICATOR_ACTIVE != 0,
+                visible: entry.state_bits & INDICATOR_VISIBLE_ELSEWHERE != 0,
+                urgent: entry.state_bits & INDICATOR_URGENT != 0,
                 action: (entry.action != 0).then_some(entry.action),
             })
             .collect(),

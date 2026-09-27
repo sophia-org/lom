@@ -79,7 +79,7 @@ impl<R: ContentRenderer> ShellService<R> {
 
     pub(super) fn release_resource(
         &mut self,
-        released: &sophia_protocol::ContentResourceReleased,
+        released: &sophia_shell_protocol::ContentResourceReleased,
     ) -> Result<(), String> {
         let slot = self
             .panels

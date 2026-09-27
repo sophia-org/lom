@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 // A private wire peer, not a native renderer. Interleave independent output
 // lifecycles so a sequential fake server cannot hide client serialization.
-pub(super) fn exchange(stream: &mut UnixStream) {
+pub(super) fn exchange(stream: &mut Peer) {
     let mut resources = BTreeMap::new();
     let mut first_use = 0;
     let mut candidate = None;
@@ -92,7 +92,7 @@ pub(super) fn exchange(stream: &mut UnixStream) {
                         stream,
                         origin,
                         ShellContentRecord::CandidateOutcome(
-                            sophia_protocol::ContentCandidateOutcome {
+                            sophia_shell_protocol::ContentCandidateOutcome {
                                 grant: GRANT,
                                 candidate_generation: generations,
                                 output: begin.output,
@@ -108,20 +108,16 @@ pub(super) fn exchange(stream: &mut UnixStream) {
                 if generations == 2 {
                     assert_eq!(outputs.len(), 2);
                     outputs.clear();
-                    for frame in encode_shell_indicator_snapshot(
+                    stream.indicators(
                         TransactionId::from_raw(70),
-                        &ShellIndicatorSnapshot {
+                        ShellIndicatorSnapshot {
                             connection_epoch: GRANT.connection_epoch,
                             generation: 1,
                             active_output: None,
                             statuses: Vec::new(),
                             indicators: Vec::new(),
                         },
-                    )
-                    .unwrap()
-                    {
-                        stream.write_all(&frame).unwrap();
-                    }
+                    );
                 }
                 if generations == 4 {
                     assert_eq!(outputs.len(), 2);
@@ -140,7 +136,7 @@ pub(super) fn exchange(stream: &mut UnixStream) {
                     stream,
                     transaction,
                     ShellContentRecord::ResourceReleased(
-                        sophia_protocol::ContentResourceReleased {
+                        sophia_shell_protocol::ContentResourceReleased {
                             grant: GRANT,
                             resource: retire.resource,
                             reason: 0,

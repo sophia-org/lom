@@ -48,15 +48,15 @@ fn expired_worker_job_is_quarantined_instead_of_reused() {
 
 fn identity() -> RenderIdentity {
     RenderIdentity {
-        grant: sophia_protocol::ContentGrant {
+        grant: sophia_shell_protocol::ContentGrant {
             connection_epoch: 1,
             content_grant_epoch: 2,
         },
-        output: sophia_protocol::ContentOutputId {
+        output: sophia_shell_protocol::ContentOutputId {
             id: 1,
             generation: 1,
         },
-        allocation: sophia_protocol::ContentAllocationId {
+        allocation: sophia_shell_protocol::ContentAllocationId {
             id: 1,
             generation: 1,
         },

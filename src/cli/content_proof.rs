@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use sophia_protocol::{
+use sophia_shell_client::{Admission, Custody, ShellClientOptions, ShellConnection};
+use sophia_shell_protocol::{
     ContentAllocationId, ContentAllocationRequest, ContentCandidateBegin, ContentCandidateChunk,
     ContentCandidateEnd, ContentFrameDemand, ContentMargins, ContentPixelRect, ContentPlacement,
     ContentReason, ContentResourceBegin, ContentResourceChunk, ContentResourceEnd,
@@ -9,17 +10,16 @@ use sophia_protocol::{
     SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE, SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER,
     ShellContentRecord, TransactionId,
 };
-use sophia_shell_client::{ShellClientOptions, ShellConnection};
 
 use crate::protocol::ContentPixels;
 
 pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     let capabilities =
         SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE;
-    let mut connection = ShellConnection::connect(
+    let mut connection = ShellConnection::connect_files(
         socket,
         ShellClientOptions {
-            minimum_revision: 5,
+            minimum_revision: 6,
             maximum_revision: 6,
             required_capabilities: capabilities,
             handshake_timeout: Duration::from_secs(5),
@@ -36,6 +36,14 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
         return Err("conformance host did not publish one exact output".into());
     };
     let output = output.clone();
+    let mut lifecycle = sophia_shell_client::ContentLifecycle::new(limits.clone())
+        .map_err(|e| format!("content lifecycle: {e:?}"))?;
+    lifecycle
+        .dispatch(
+            TransactionId::from_raw(2),
+            ShellContentRecord::OutputFacts(facts.clone()),
+        )
+        .map_err(|e| format!("content facts: {e:?}"))?;
     send(
         &mut connection,
         TransactionId::from_raw(3),
@@ -66,6 +74,12 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     {
         return Err("panel allocation was not granted with the requested dimensions".into());
     }
+    lifecycle
+        .dispatch(
+            TransactionId::from_raw(3),
+            ShellContentRecord::AllocationResult(allocation.clone()),
+        )
+        .map_err(|e| format!("content allocation: {e:?}"))?;
     let pixels = ContentPixels::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 128])?;
     let chunks = pixels
         .chunks(limits.max_frame_payload, limits.max_chunk_bytes)?
@@ -91,6 +105,14 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
             total_bytes: pixels.bytes().len() as u64,
         }),
     )?;
+    let admitted = receive(&mut connection)?;
+    if !matches!(&admitted, ShellContentRecord::ResourceStatus(status) if status.resource == resource && status.status == 1)
+    {
+        return Err("resource was not admitted".into());
+    }
+    lifecycle
+        .dispatch(upload, admitted)
+        .map_err(|e| format!("resource admission: {e:?}"))?;
     for chunk in chunks {
         send(
             &mut connection,
@@ -114,12 +136,14 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
             chunk_count,
         }),
     )?;
-    let statuses = [receive(&mut connection)?, receive(&mut connection)?];
-    if !matches!(&statuses[0], ShellContentRecord::ResourceStatus(status) if status.status == 1)
-        || !matches!(&statuses[1], ShellContentRecord::ResourceStatus(status) if status.status == 2)
+    let accepted = receive(&mut connection)?;
+    if !matches!(&accepted, ShellContentRecord::ResourceStatus(status) if status.resource == resource && status.status == 2)
     {
-        return Err("resource did not pass admitted then accepted states".into());
+        return Err("resource was not accepted".into());
     }
+    lifecycle
+        .dispatch(upload, accepted)
+        .map_err(|e| format!("resource acceptance: {e:?}"))?;
     send(
         &mut connection,
         TransactionId::from_raw(9),
@@ -137,75 +161,74 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     if permit.state != 1 || permit.permit_id == 0 {
         return Err("frame permit was not a fresh grant".into());
     }
-    for (transaction, record) in [
-        (
-            10,
-            ShellContentRecord::CandidateBegin(ContentCandidateBegin {
-                grant: limits.grant,
-                candidate_generation: 1,
-                output: permit.output,
-                facts_generation: facts.facts_generation,
-                pacing_permit: permit.permit_id,
-                interaction_generation: 1,
-                surface_count: 1,
-                placement_count: 1,
-                target_count: 1,
-            }),
-        ),
-        (
-            11,
-            ShellContentRecord::CandidateChunk(ContentCandidateChunk {
-                grant: limits.grant,
-                candidate_generation: 1,
-                chunk_ordinal: 0,
-                surfaces: vec![ContentSurface {
-                    allocation: allocation.allocation,
-                    scale_generation: allocation.scale_generation,
-                    role: 1,
-                    edge: 1,
-                    margins: allocation.margins,
-                    reservation_extent: allocation.allowed_reservation_extent.min(24),
-                    parent_surface_index: u16::MAX,
-                    anchor_parent_rect: ContentPixelRect::default(),
-                }],
-                placements: vec![ContentPlacement {
-                    resource,
-                    surface_index: 0,
-                    destination_x_px: 3,
-                    destination_y_px: 4,
-                }],
-                targets: vec![ContentTarget {
-                    surface_index: 0,
-                    action_kind: 1,
-                    target_id: 1,
-                    target_generation: 1,
-                    action_id: 1,
-                    bounds_px: ContentPixelRect {
-                        x: 3,
-                        y: 4,
-                        width: 2,
-                        height: 1,
-                    },
-                }],
-            }),
-        ),
-        (
-            12,
-            ShellContentRecord::CandidateEnd(ContentCandidateEnd {
-                grant: limits.grant,
-                candidate_generation: 1,
-                surface_count: 1,
-                placement_count: 1,
-                target_count: 1,
-            }),
-        ),
-    ] {
-        send(
-            &mut connection,
-            TransactionId::from_raw(transaction),
-            record,
-        )?;
-    }
+    lifecycle
+        .dispatch(
+            TransactionId::from_raw(9),
+            ShellContentRecord::FramePermit(permit.clone()),
+        )
+        .map_err(|e| format!("frame permit: {e:?}"))?;
+    let candidate_records = [
+        ShellContentRecord::CandidateBegin(ContentCandidateBegin {
+            grant: limits.grant,
+            candidate_generation: 1,
+            output: permit.output,
+            facts_generation: facts.facts_generation,
+            pacing_permit: permit.permit_id,
+            interaction_generation: 1,
+            surface_count: 1,
+            placement_count: 1,
+            target_count: 1,
+        }),
+        ShellContentRecord::CandidateChunk(ContentCandidateChunk {
+            grant: limits.grant,
+            candidate_generation: 1,
+            chunk_ordinal: 0,
+            surfaces: vec![ContentSurface {
+                allocation: allocation.allocation,
+                scale_generation: allocation.scale_generation,
+                role: 1,
+                edge: 1,
+                margins: allocation.margins,
+                reservation_extent: allocation.allowed_reservation_extent.min(24),
+                parent_surface_index: u16::MAX,
+                anchor_parent_rect: ContentPixelRect::default(),
+            }],
+            placements: vec![ContentPlacement {
+                resource,
+                surface_index: 0,
+                destination_x_px: 3,
+                destination_y_px: 4,
+            }],
+            targets: vec![ContentTarget {
+                surface_index: 0,
+                action_kind: 1,
+                target_id: 1,
+                target_generation: 1,
+                action_id: 1,
+                bounds_px: ContentPixelRect {
+                    x: 3,
+                    y: 4,
+                    width: 2,
+                    height: 1,
+                },
+            }],
+        }),
+        ShellContentRecord::CandidateEnd(ContentCandidateEnd {
+            grant: limits.grant,
+            candidate_generation: 1,
+            surface_count: 1,
+            placement_count: 1,
+            target_count: 1,
+        }),
+    ];
+    let admission = connection
+        .enqueue_candidate_tracked(
+            &mut lifecycle,
+            TransactionId::from_raw(10),
+            &candidate_records,
+        )
+        .map_err(|e| format!("content candidate: {e}"))?;
+    await_custody(&mut connection, admission)?;
     let ShellContentRecord::CandidateOutcome(outcome) = receive(&mut connection)? else {
         return Err("candidate did not receive a terminal outcome".into());
     };
@@ -245,9 +268,34 @@ fn send(
     transaction: TransactionId,
     record: ShellContentRecord,
 ) -> Result<(), String> {
-    connection
-        .send_content(transaction, &record)
-        .map_err(|error| format!("content send failed: {error}"))
+    let admission = connection
+        .enqueue_content_tracked(transaction, &record)
+        .map_err(|error| format!("content send failed: {error}"))?;
+    await_custody(connection, admission)
+}
+
+fn await_custody(connection: &mut ShellConnection, admission: Admission) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        connection
+            .poll_io()
+            .map_err(|e| format!("content custody: {e}"))?;
+        let mut waiting = false;
+        for ticket in admission.tickets() {
+            match connection.custody(ticket) {
+                Some(Custody::Submitted | Custody::Stored) => {}
+                Some(Custody::Queued | Custody::InFlight) => waiting = true,
+                other => return Err(format!("content custody refused: {other:?}")),
+            }
+        }
+        if !waiting {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err("content custody timed out".into());
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 fn receive(connection: &mut ShellConnection) -> Result<ShellContentRecord, String> {
@@ -255,7 +303,9 @@ fn receive(connection: &mut ShellConnection) -> Result<ShellContentRecord, Strin
     loop {
         match connection.poll_content() {
             Ok(Some((_, record))) => return Ok(record),
-            Ok(None) if Instant::now() < deadline => std::thread::yield_now(),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(1));
+            }
             Ok(None) => return Err("content response timed out".into()),
             Err(error) => return Err(format!("content receive failed: {error}")),
         }

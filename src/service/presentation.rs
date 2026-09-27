@@ -227,10 +227,7 @@ impl<R: ContentRenderer> ShellService<R> {
                 .count() as u32,
             total_bytes: pixels.bytes().len() as u64,
         });
-        match self
-            .connection
-            .enqueue_content(pending.upload_transaction, &begin)
-        {
+        match self.enqueue_content(pending.upload_transaction, &begin) {
             Ok(()) => {}
             Err(sophia_shell_client::ShellClientError::QueueSaturated) => return Ok(false),
             Err(error) => return Err(format!("resource begin failed: {error}")),
@@ -282,7 +279,7 @@ impl<R: ContentRenderer> ShellService<R> {
             .skip(pending.next_chunk as usize)
             .take(self.upload_chunks_left)
         {
-            match self.connection.enqueue_content(
+            match self.enqueue_content(
                 pending.upload_transaction,
                 &ShellContentRecord::ResourceChunk(ContentResourceChunk {
                     grant: self.limits.grant,
@@ -303,7 +300,7 @@ impl<R: ContentRenderer> ShellService<R> {
         if pending.next_chunk != chunk_count {
             return Ok(false);
         }
-        match self.connection.enqueue_content(
+        match self.enqueue_content(
             pending.upload_transaction,
             &ShellContentRecord::ResourceEnd(ContentResourceEnd {
                 grant: self.limits.grant,
@@ -352,7 +349,7 @@ impl<R: ContentRenderer> ShellService<R> {
             reason: 1,
         });
         let transaction = self.transaction()?;
-        match self.connection.enqueue_content(transaction, &record) {
+        match self.enqueue_content(transaction, &record) {
             Ok(()) => {}
             Err(sophia_shell_client::ShellClientError::QueueSaturated) => return Ok(false),
             Err(error) => return Err(format!("frame demand failed: {error}")),
@@ -416,7 +413,7 @@ impl<R: ContentRenderer> ShellService<R> {
 
     pub(super) fn install_presented_targets(
         &mut self,
-        outcome: &sophia_protocol::ContentCandidateOutcome,
+        outcome: &sophia_shell_protocol::ContentCandidateOutcome,
     ) -> Result<(), String> {
         let pending = self
             .presentations
@@ -479,7 +476,7 @@ impl<R: ContentRenderer> ShellService<R> {
                 return Ok(false);
             }
             let transaction = self.transaction()?;
-            match self.connection.enqueue_content(
+            match self.enqueue_content(
                 transaction,
                 &ShellContentRecord::ResourceRetire(ContentResourceRetire {
                     grant: self.limits.grant,
@@ -613,11 +610,7 @@ impl<R: ContentRenderer> ShellService<R> {
             target_count,
         });
         let transaction = self.transaction()?;
-        match self.connection.enqueue_candidate(
-            &mut self.lifecycle,
-            transaction,
-            &[begin, chunk, end],
-        ) {
+        match self.enqueue_candidate(transaction, &[begin, chunk, end]) {
             Ok(()) => {}
             Err(sophia_shell_client::ShellClientError::QueueSaturated) => return Ok(false),
             Err(error) => return Err(format!("candidate outbox admission: {error}")),

@@ -8,37 +8,98 @@ use lom::{
     ui::ContentTargetLayout,
     update::Msg,
 };
-use sophia_protocol::{
+use sophia_shell_client::{ShellClientOptions, ShellConnection};
+use sophia_shell_protocol::{
     ContentAction, ContentAllocationId, ContentAllocationResult, ContentFramePermit, ContentGrant,
     ContentLogicalRect, ContentMargins, ContentOutputFacts, ContentOutputFactsEntry,
     ContentOutputId, ContentPixelRect, ContentReason, ContentResourceId, ContentResourceStatus,
-    OutputId, POLICY_INDICATOR_STATE_ACTIVE, SOPHIA_IPC_HEADER_LEN,
-    SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT, SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE,
-    SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER, SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION,
-    SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS, ShellContentRecord, ShellIndicator,
-    ShellIndicatorActivationOutcome, ShellIndicatorActivationStatus, ShellIndicatorSnapshot,
-    ShellV1ClientHello, ShellV1ServerWelcome, TransactionId, decode_frame,
-    decode_shell_content_frame, decode_shell_indicator_activation,
-    decode_shell_v1_client_hello_frame, encode_shell_content_frame,
-    encode_shell_indicator_activation_outcome, encode_shell_indicator_snapshot,
-    encode_shell_v1_server_welcome_frame,
+    OutputId, SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT,
+    SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE, SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER,
+    SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION, SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS,
+    ShellContentRecord, ShellIndicator, ShellIndicatorActivationOutcome,
+    ShellIndicatorActivationStatus, ShellIndicatorSnapshot, TransactionId,
 };
-use sophia_shell_client::{ShellClientOptions, ShellConnection};
 use std::{
-    io::{Read, Write},
     os::unix::net::{UnixListener, UnixStream},
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
+
+#[path = "support/content_proof.rs"]
+mod content_proof;
+#[path = "support/files_peer.rs"]
+mod files_peer;
+
+#[path = "support/files_wire.rs"]
+mod files_wire;
+use files_peer::{Message, Peer};
 
 #[path = "support/service_multiplex.rs"]
 mod service_multiplex;
 #[path = "support/service_refresh.rs"]
 mod service_refresh;
 
+const POLICY_INDICATOR_STATE_ACTIVE: u16 = 1;
+
 static SOCKET_ID: AtomicU64 = AtomicU64::new(1);
+
+#[test]
+fn a_refused_file_submission_is_reported_without_waiting_for_an_owner_outcome() {
+    let path = std::env::temp_dir().join(format!(
+        "lom-refused-{}-{}.sock",
+        std::process::id(),
+        SOCKET_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let listener = UnixListener::bind(&path).unwrap();
+    let (done, wait) = std::sync::mpsc::channel();
+    let capabilities =
+        SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE | SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER;
+    let server = std::thread::spawn(move || {
+        let peer = Peer::with_refusal(
+            listener.accept().unwrap().0,
+            capabilities,
+            Some(sophia_shell_protocol::shell_files::ShellFileKind::AllocationRequest),
+        );
+        peer.content(
+            TransactionId::from_raw(2),
+            ShellContentRecord::OutputFacts(ContentOutputFacts {
+                grant: GRANT,
+                facts_generation: 4,
+                outputs: vec![ContentOutputFactsEntry {
+                    output: OUTPUT,
+                    local_width: 4,
+                    local_height: 32,
+                    scale_numerator: 2,
+                    scale_denominator: 1,
+                    scale_generation: 5,
+                }],
+            }),
+        );
+        wait.recv_timeout(Duration::from_secs(5)).unwrap();
+    });
+    let connection = ShellConnection::connect_files(
+        &path,
+        ShellClientOptions {
+            minimum_revision: 6,
+            maximum_revision: 6,
+            required_capabilities: capabilities,
+            handshake_timeout: Duration::from_secs(2),
+        },
+    )
+    .unwrap();
+    let (config, theme) =
+        parse_shell_config(include_str!("../examples/minimal/shell.kdl")).unwrap();
+    let Err(error) = ShellService::new(connection, config, theme, 48, ImmediateRenderer(None))
+    else {
+        panic!("refused allocation must fail the service");
+    };
+    assert!(error.contains("refused: errno=13"), "{error}");
+    done.send(()).unwrap();
+    server.join().unwrap();
+    std::fs::remove_file(path).unwrap();
+}
 const GRANT: ContentGrant = ContentGrant {
-    connection_epoch: 7,
+    connection_epoch: files_wire::EPOCH,
     content_grant_epoch: 9,
 };
 const OUTPUT: ContentOutputId = ContentOutputId {
@@ -179,7 +240,7 @@ fn persistent_service_negotiates_allocates_uploads_and_waits_for_native_presenta
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
         | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION;
-    let connection = ShellConnection::connect(
+    let connection = ShellConnection::connect_files(
         &path,
         ShellClientOptions {
             minimum_revision: 6,
@@ -240,7 +301,7 @@ fn candidate_generations_are_unique_across_outputs() {
     let capabilities = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS;
-    let connection = ShellConnection::connect(
+    let connection = ShellConnection::connect_files(
         &path,
         ShellClientOptions {
             minimum_revision: 6,
@@ -270,48 +331,25 @@ fn candidate_generations_are_unique_across_outputs() {
 }
 
 fn serve_two_outputs(
-    mut stream: UnixStream,
+    stream: UnixStream,
     done: std::sync::mpsc::Receiver<()>,
     drained: std::sync::mpsc::Sender<()>,
 ) {
     let expected = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS;
-    initialize_two_outputs(&mut stream, expected);
+    let mut stream = Peer::new(stream, expected);
+    initialize_two_outputs(&mut stream);
     service_multiplex::exchange(&mut stream);
     drained.send(()).unwrap();
     done.recv_timeout(Duration::from_secs(2)).unwrap();
 }
 
-fn initialize_two_outputs(stream: &mut UnixStream, expected: u64) {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .unwrap();
-    let hello = read_frame(stream);
-    let ShellV1ClientHello {
-        minimum_revision,
-        maximum_revision,
-        required_capabilities,
-    } = decode_shell_v1_client_hello_frame(&hello).unwrap();
-    assert_eq!((minimum_revision, maximum_revision), (6, 6));
-    assert_eq!(required_capabilities, expected);
-    stream
-        .write_all(
-            &encode_shell_v1_server_welcome_frame(ShellV1ServerWelcome {
-                selected_revision: 6,
-                capabilities: expected,
-                connection_epoch: GRANT.connection_epoch,
-                max_descriptors: 16,
-                max_label_bytes: 32,
-                max_pending_activations: 16,
-            })
-            .unwrap(),
-        )
-        .unwrap();
+fn initialize_two_outputs(stream: &mut Peer) {
     send(
         stream,
         0,
-        ShellContentRecord::Limits(sophia_protocol::ContentLimits::prototype(GRANT)),
+        ShellContentRecord::Limits(sophia_shell_protocol::ContentLimits::prototype(GRANT)),
     );
     send(
         stream,
@@ -378,84 +416,51 @@ fn initialize_two_outputs(stream: &mut UnixStream, expected: u64) {
 }
 
 fn serve_one(
-    mut stream: UnixStream,
+    stream: UnixStream,
     done: std::sync::mpsc::Receiver<()>,
     render_started: std::sync::mpsc::Receiver<()>,
     render_release: std::sync::mpsc::Sender<()>,
     activation_done: std::sync::mpsc::Sender<()>,
 ) {
-    let hello = read_frame(&mut stream);
-    let ShellV1ClientHello {
-        minimum_revision,
-        maximum_revision,
-        required_capabilities,
-    } = decode_shell_v1_client_hello_frame(&hello).unwrap();
-    assert_eq!((minimum_revision, maximum_revision), (6, 6));
     let expected = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
         | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION;
-    assert_eq!(required_capabilities, expected);
-    stream
-        .write_all(
-            &encode_shell_v1_server_welcome_frame(ShellV1ServerWelcome {
-                selected_revision: 6,
-                capabilities: expected,
-                connection_epoch: GRANT.connection_epoch,
-                max_descriptors: 16,
-                max_label_bytes: 32,
-                max_pending_activations: 16,
-            })
-            .unwrap(),
-        )
-        .unwrap();
-    let mut startup = encode_shell_content_frame(
-        TransactionId::from_raw(0),
-        &ShellContentRecord::Limits(sophia_protocol::ContentLimits::prototype(GRANT)),
-    )
-    .unwrap();
-    startup.extend(
-        encode_shell_indicator_snapshot(
-            TransactionId::from_raw(3),
-            &ShellIndicatorSnapshot {
-                connection_epoch: GRANT.connection_epoch,
-                generation: 6,
-                active_output: Some(OutputId::from_raw(OUTPUT.id)),
-                statuses: Vec::new(),
-                indicators: vec![ShellIndicator {
-                    output: OutputId::from_raw(OUTPUT.id),
-                    indicator: 14,
-                    action: 15,
-                    slot: 0,
-                    state_bits: POLICY_INDICATOR_STATE_ACTIVE,
-                    label: "one".into(),
-                }],
-            },
-        )
-        .unwrap()
-        .into_iter()
-        .flatten(),
+    let mut stream = Peer::new(stream, expected);
+    stream.indicators(
+        TransactionId::from_raw(3),
+        ShellIndicatorSnapshot {
+            connection_epoch: GRANT.connection_epoch,
+            generation: 6,
+            active_output: Some(OutputId::from_raw(OUTPUT.id)),
+            statuses: Vec::new(),
+            indicators: vec![ShellIndicator {
+                output: OutputId::from_raw(OUTPUT.id),
+                indicator: 14,
+                action: 15,
+                slot: 0,
+                state_bits: POLICY_INDICATOR_STATE_ACTIVE,
+                label: "one".into(),
+            }],
+        },
     );
-    startup.extend(
-        encode_shell_content_frame(
-            TransactionId::from_raw(2),
-            &ShellContentRecord::OutputFacts(ContentOutputFacts {
-                grant: GRANT,
-                facts_generation: 4,
-                outputs: vec![ContentOutputFactsEntry {
-                    output: OUTPUT,
-                    local_width: 4,
-                    local_height: 32,
-                    scale_numerator: 2,
-                    scale_denominator: 1,
-                    scale_generation: 5,
-                }],
-            }),
-        )
-        .unwrap(),
+    send(
+        &mut stream,
+        2,
+        ShellContentRecord::OutputFacts(ContentOutputFacts {
+            grant: GRANT,
+            facts_generation: 4,
+            outputs: vec![ContentOutputFactsEntry {
+                output: OUTPUT,
+                local_width: 4,
+                local_height: 32,
+                scale_numerator: 2,
+                scale_denominator: 1,
+                scale_generation: 5,
+            }],
+        }),
     );
-    stream.write_all(&startup).unwrap();
 
     let (transaction, ShellContentRecord::AllocationRequest(request)) = receive(&mut stream) else {
         panic!("expected allocation request");
@@ -498,9 +503,9 @@ fn serve_one(
     );
 
     render_started.recv_timeout(Duration::from_secs(2)).unwrap();
-    for frame in encode_shell_indicator_snapshot(
+    stream.indicators(
         TransactionId::from_raw(50),
-        &ShellIndicatorSnapshot {
+        ShellIndicatorSnapshot {
             connection_epoch: GRANT.connection_epoch,
             generation: 7,
             active_output: Some(OutputId::from_raw(OUTPUT.id)),
@@ -514,11 +519,7 @@ fn serve_one(
                 label: "two".into(),
             }],
         },
-    )
-    .unwrap()
-    {
-        stream.write_all(&frame).unwrap();
-    }
+    );
     render_release.send(()).unwrap();
     let first = serve_frame(&mut stream, OUTPUT, allocation, 1, 22, 31, 1);
     let second = serve_frame(&mut stream, OUTPUT, allocation, 2, 23, 32, 1);
@@ -547,8 +548,9 @@ fn serve_one(
         panic!("expected content action acknowledgement");
     };
     assert_eq!((ack.event_id, ack.disposition), (41, 1));
-    let frame = read_frame(&mut stream);
-    let (activation_tx, activation) = decode_shell_indicator_activation(&frame).unwrap();
+    let Message::Activation(activation_tx, activation) = stream.receive() else {
+        panic!("expected activation")
+    };
     assert_eq!(
         activation.snapshot_generation, 7,
         "publication is not button generation2"
@@ -557,42 +559,26 @@ fn serve_one(
         (activation.event_id, activation.indicator, activation.action),
         (41, 14, 15)
     );
-    stream
-        .write_all(
-            &encode_shell_indicator_activation_outcome(
-                activation_tx,
-                &ShellIndicatorActivationOutcome {
-                    connection_epoch: GRANT.connection_epoch,
-                    snapshot_generation: 7,
-                    event_id: 41,
-                    status: ShellIndicatorActivationStatus::Accepted,
-                    reason: 0,
-                },
-            )
-            .unwrap(),
-        )
-        .unwrap();
+    stream.activation(
+        activation_tx,
+        ShellIndicatorActivationOutcome {
+            connection_epoch: GRANT.connection_epoch,
+            snapshot_generation: 7,
+            event_id: 41,
+            status: ShellIndicatorActivationStatus::Accepted,
+            reason: 0,
+        },
+    );
     send(&mut stream, 92, ShellContentRecord::Action(action));
     let (_, ShellContentRecord::ActionAck(duplicate)) = receive(&mut stream) else {
         panic!("expected duplicate action rejection");
     };
     assert_eq!((duplicate.event_id, duplicate.disposition), (41, 2));
-    stream
-        .set_read_timeout(Some(Duration::from_millis(50)))
-        .unwrap();
-    let mut unexpected = [0_u8; 1];
-    let error = stream
-        .read(&mut unexpected)
-        .expect_err("a duplicate action must not emit a second activation");
-    assert!(matches!(
-        error.kind(),
-        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-    ));
-    stream.set_read_timeout(None).unwrap();
+    stream.no_message();
     send_tx(
         &mut stream,
         retire_tx,
-        ShellContentRecord::ResourceReleased(sophia_protocol::ContentResourceReleased {
+        ShellContentRecord::ResourceReleased(sophia_shell_protocol::ContentResourceReleased {
             grant: GRANT,
             resource: first,
             reason: ContentReason::None as u16,
@@ -603,7 +589,7 @@ fn serve_one(
 }
 
 fn serve_frame(
-    stream: &mut UnixStream,
+    stream: &mut Peer,
     output: ContentOutputId,
     allocation: ContentAllocationId,
     expected_candidate: u64,
@@ -697,7 +683,7 @@ fn serve_frame(
         send_tx(
             stream,
             candidate_tx,
-            ShellContentRecord::CandidateOutcome(sophia_protocol::ContentCandidateOutcome {
+            ShellContentRecord::CandidateOutcome(sophia_shell_protocol::ContentCandidateOutcome {
                 grant: GRANT,
                 candidate_generation: candidate.candidate_generation,
                 output,
@@ -712,29 +698,17 @@ fn serve_frame(
     begin.resource
 }
 
-fn send(stream: &mut UnixStream, transaction: u64, record: ShellContentRecord) {
+fn send(stream: &mut Peer, transaction: u64, record: ShellContentRecord) {
     send_tx(stream, TransactionId::from_raw(transaction), record);
 }
 
-fn send_tx(stream: &mut UnixStream, transaction: TransactionId, record: ShellContentRecord) {
-    stream
-        .write_all(&encode_shell_content_frame(transaction, &record).unwrap())
-        .unwrap();
+fn send_tx(stream: &mut Peer, transaction: TransactionId, record: ShellContentRecord) {
+    stream.content(transaction, record);
 }
 
-fn receive(stream: &mut UnixStream) -> (TransactionId, ShellContentRecord) {
-    decode_shell_content_frame(&read_frame(stream)).unwrap()
-}
-
-fn read_frame(stream: &mut UnixStream) -> Vec<u8> {
-    let mut header = [0; SOPHIA_IPC_HEADER_LEN];
-    stream.read_exact(&mut header).unwrap();
-    let payload = u32::from_le_bytes(header[16..20].try_into().unwrap()) as usize;
-    let mut frame = header.to_vec();
-    frame.resize(SOPHIA_IPC_HEADER_LEN + payload, 0);
-    stream
-        .read_exact(&mut frame[SOPHIA_IPC_HEADER_LEN..])
-        .unwrap();
-    decode_frame(&frame).unwrap();
-    frame
+fn receive(stream: &mut Peer) -> (TransactionId, ShellContentRecord) {
+    let Message::Content(tx, record) = stream.receive() else {
+        panic!("expected content record")
+    };
+    (tx, *record)
 }

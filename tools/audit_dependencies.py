@@ -8,6 +8,8 @@ from pathlib import Path
 FORBIDDEN = {
     "gtk", "gtk4", "gdk4", "winit", "masonry_winit", "wayland-client", "x11rb",
     "masonry_testing", "imaging_vello_cpu", "vello_cpu",
+    "sophia-shell-ipc", "sophia-protocol", "sophia-runtime", "sophia-session",
+    "sophia-engine", "sophia-backend-live",
 }
 
 
@@ -26,7 +28,7 @@ def main():
     if forbidden:
         print("Forbidden production dependencies: " + ", ".join(forbidden), file=sys.stderr)
         return 1
-    print("Production dependency boundary passed (no display runner or CPU test renderer).")
+    print("Production dependency boundary passed (standalone SDK; no server, IPC, display runner or CPU test renderer).")
     return 0
 
 

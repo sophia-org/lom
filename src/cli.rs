@@ -15,7 +15,7 @@ use std::{
 };
 
 /// Help displayed without loading configuration, fonts or a GPU.
-pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n       lom content-proof --socket FILE\n       lom --serve\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\ncontent-proof exercises fixed diagnostic pixels over an explicitly admitted Sophia socket; it does not present a panel.\n--serve is the persistent protected Sophia content-shell entry point.\n";
+pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n       lom content-proof --socket FILE\n       lom --serve\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\ncontent-proof exercises fixed diagnostic pixels over an explicitly admitted Sophia 9P socket; it does not present a panel.\n--serve is the persistent protected Sophia content-shell entry point.\n";
 
 /// Run one diagnostic command; the caller prints any returned boundary failure.
 pub fn run(arguments: Vec<OsString>) -> Result<(), String> {

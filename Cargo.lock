@@ -1095,9 +1095,9 @@ dependencies = [
  "kdl",
  "masonry",
  "masonry_testing",
- "sophia-protocol",
  "sophia-shell-client",
  "sophia-shell-gpu",
+ "sophia-shell-protocol",
  "tokio",
  "wgpu",
  "xilem_masonry",
@@ -1851,16 +1851,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
 
 [[package]]
-name = "sophia-protocol"
+name = "sophia-9p-client"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia?rev=2e569301bc803cdcdcc234097b84f724e5296f23#2e569301bc803cdcdcc234097b84f724e5296f23"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0da10428ad2ef85ff9f1c35c11238fbfebe81d04#0da10428ad2ef85ff9f1c35c11238fbfebe81d04"
+dependencies = [
+ "rustix",
+ "sophia-9p-records",
+]
+
+[[package]]
+name = "sophia-9p-records"
+version = "0.1.0"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0da10428ad2ef85ff9f1c35c11238fbfebe81d04#0da10428ad2ef85ff9f1c35c11238fbfebe81d04"
+
+[[package]]
+name = "sophia-desktop-ids"
+version = "0.1.0"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0da10428ad2ef85ff9f1c35c11238fbfebe81d04#0da10428ad2ef85ff9f1c35c11238fbfebe81d04"
 
 [[package]]
 name = "sophia-shell-client"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia?rev=2e569301bc803cdcdcc234097b84f724e5296f23#2e569301bc803cdcdcc234097b84f724e5296f23"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0da10428ad2ef85ff9f1c35c11238fbfebe81d04#0da10428ad2ef85ff9f1c35c11238fbfebe81d04"
 dependencies = [
- "sophia-protocol",
+ "sophia-9p-client",
+ "sophia-9p-records",
+ "sophia-shell-protocol",
 ]
 
 [[package]]
@@ -1873,6 +1889,14 @@ dependencies = [
  "pollster",
  "rustix",
  "wgpu",
+]
+
+[[package]]
+name = "sophia-shell-protocol"
+version = "0.1.0"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0da10428ad2ef85ff9f1c35c11238fbfebe81d04#0da10428ad2ef85ff9f1c35c11238fbfebe81d04"
+dependencies = [
+ "sophia-desktop-ids",
 ]
 
 [[package]]

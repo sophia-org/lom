@@ -53,10 +53,10 @@ impl ContentRenderer for CountedRenderer {
         Ok(self.ready.take())
     }
 }
-fn indicators(stream: &mut UnixStream, generation: u64) {
-    for frame in encode_shell_indicator_snapshot(
+fn indicators(stream: &mut Peer, generation: u64) {
+    stream.indicators(
         TransactionId::from_raw(90 + generation),
-        &ShellIndicatorSnapshot {
+        ShellIndicatorSnapshot {
             connection_epoch: GRANT.connection_epoch,
             generation,
             active_output: Some(OutputId::from_raw(OUTPUT.id)),
@@ -77,11 +77,7 @@ fn indicators(stream: &mut UnixStream, generation: u64) {
                 })
                 .collect(),
         },
-    )
-    .unwrap()
-    {
-        stream.write_all(&frame).unwrap();
-    }
+    );
 }
 
 #[test]
@@ -100,14 +96,16 @@ fn interaction_refresh_reuses_pixels_and_stays_clickable_with_old_release_held()
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
         | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION;
     let server = std::thread::spawn(move || {
-        let mut stream = listener.accept().unwrap().0;
-        initialize_two_outputs(&mut stream, caps);
+        let mut stream = Peer::new(listener.accept().unwrap().0, caps);
+        // The file feed is fetched independently. Publish the initial view
+        // before the output allocations allow the first render to start.
         indicators(&mut stream, 1);
+        initialize_two_outputs(&mut stream);
         exchange(&mut stream);
         drained_tx.send(()).unwrap();
         done_rx.recv_timeout(Duration::from_secs(3)).unwrap();
     });
-    let connection = ShellConnection::connect(
+    let connection = ShellConnection::connect_files(
         &path,
         ShellClientOptions {
             minimum_revision: 6,
@@ -157,7 +155,7 @@ fn interaction_refresh_reuses_pixels_and_stays_clickable_with_old_release_held()
     std::fs::remove_file(path).unwrap();
 }
 
-fn exchange(stream: &mut UnixStream) {
+fn exchange(stream: &mut Peer) {
     let mut resources = BTreeMap::new();
     let mut candidate = None;
     let mut published = BTreeMap::new();
@@ -169,29 +167,26 @@ fn exchange(stream: &mut UnixStream) {
     let mut activations = 0;
     let mut next_event = 100;
     loop {
-        let frame = read_frame(stream);
-        if let Ok((transaction, activation)) = decode_shell_indicator_activation(&frame) {
+        let message = stream.receive();
+        if let Message::Activation(transaction, activation) = message {
             assert_eq!(activation.action, activation.indicator + 10);
             assert!((1..=3).contains(&activation.snapshot_generation));
             activations += 1;
-            stream
-                .write_all(
-                    &encode_shell_indicator_activation_outcome(
-                        transaction,
-                        &ShellIndicatorActivationOutcome {
-                            connection_epoch: GRANT.connection_epoch,
-                            snapshot_generation: activation.snapshot_generation,
-                            event_id: activation.event_id,
-                            status: ShellIndicatorActivationStatus::Accepted,
-                            reason: 0,
-                        },
-                    )
-                    .unwrap(),
-                )
-                .unwrap();
+            stream.activation(
+                transaction,
+                ShellIndicatorActivationOutcome {
+                    connection_epoch: GRANT.connection_epoch,
+                    snapshot_generation: activation.snapshot_generation,
+                    event_id: activation.event_id,
+                    status: ShellIndicatorActivationStatus::Accepted,
+                    reason: 0,
+                },
+            );
         } else {
-            let (transaction, record) = decode_shell_content_frame(&frame).unwrap();
-            match record {
+            let Message::Content(transaction, record) = message else {
+                unreachable!()
+            };
+            match *record {
                 ShellContentRecord::ResourceBegin(begin) => {
                     assert!(
                         resources
@@ -279,7 +274,7 @@ fn exchange(stream: &mut UnixStream) {
                         let (old_candidate, old_allocation, old_target): &(
                             u64,
                             ContentAllocationId,
-                            sophia_protocol::ContentTarget,
+                            sophia_shell_protocol::ContentTarget,
                         ) = &published[&begin.output.id];
                         send(
                             stream,
@@ -307,7 +302,7 @@ fn exchange(stream: &mut UnixStream) {
                             stream,
                             origin,
                             ShellContentRecord::CandidateOutcome(
-                                sophia_protocol::ContentCandidateOutcome {
+                                sophia_shell_protocol::ContentCandidateOutcome {
                                     grant: GRANT,
                                     candidate_generation: generations,
                                     output: begin.output,
@@ -374,11 +369,13 @@ fn exchange(stream: &mut UnixStream) {
             send_tx(
                 stream,
                 tx,
-                ShellContentRecord::ResourceReleased(sophia_protocol::ContentResourceReleased {
-                    grant: GRANT,
-                    resource: old.resource,
-                    reason: 0,
-                }),
+                ShellContentRecord::ResourceReleased(
+                    sophia_shell_protocol::ContentResourceReleased {
+                        grant: GRANT,
+                        resource: old.resource,
+                        reason: 0,
+                    },
+                ),
             );
             break;
         }

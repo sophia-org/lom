@@ -50,7 +50,30 @@ fn protected_service_requires_supervisor_supplied_inputs_before_gpu_setup() {
     assert_eq!(result.status.code(), Some(2));
     assert!(result.stdout.is_empty());
     let text = String::from_utf8(result.stderr).expect("diagnostic is UTF-8");
-    assert!(text.contains("SOPHIA_SHELL_SOCKET is required"));
+    assert!(text.contains("SOPHIA_SHELL_9P_SOCKET is required"));
+}
+
+#[test]
+fn protected_service_refuses_retired_transport_before_loading_config() {
+    for retired in ["", "/retired"] {
+        for files in [None, Some("/files")] {
+            let mut command = Command::new(env!("CARGO_BIN_EXE_lom"));
+            command
+                .arg("--serve")
+                .env_clear()
+                .env("SOPHIA_SHELL_SOCKET", retired);
+            if let Some(files) = files {
+                command.env("SOPHIA_SHELL_9P_SOCKET", files);
+            }
+            let result = command.output().unwrap();
+            assert_eq!(result.status.code(), Some(2));
+            assert!(
+                String::from_utf8(result.stderr)
+                    .unwrap()
+                    .contains("SOPHIA_SHELL_SOCKET is unsupported")
+            );
+        }
+    }
 }
 
 #[test]

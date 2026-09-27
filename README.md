@@ -72,7 +72,7 @@ lom --serve
 ```
 
 `--serve` is a supervisor entry point, not a command to run from an ordinary
-terminal. It requires `SOPHIA_SHELL_SOCKET`, `SOPHIA_SHELL_CONFIG` and
+terminal. It requires `SOPHIA_SHELL_9P_SOCKET`, `SOPHIA_SHELL_CONFIG` and
 `SOPHIA_SHELL_BAR_THICKNESS`, negotiates revision 6, allocates one panel per
 published output, renders with Vello, and waits for actual `Presented` outcomes
 before retiring replaced resources. Production content and its discrete workspace actions remain default-denied in
@@ -86,11 +86,19 @@ the grant or an ambient display fallback. Running `lom`
 without a command exits with status 2. Nothing here installs or changes the
 current desktop.
 
-`lom content-proof --socket PATH` is reserved for Sophia's protected conformance
-host. It requests one panel allocation, uploads canonical pixels, raises a frame
-demand and submits one complete candidate under the returned permit. The current
-headless host returns renderer failure by design; neither side reports that
-exchange as native presentation.
+Both service and diagnostic connections use the standalone Rust desktop SDK,
+pinned in Cargo.lock. There is no IPC transport dependency. The service refuses
+`SOPHIA_SHELL_SOCKET`, including when a 9P endpoint is also supplied. It emits
+`lom_shell_transport schema=1 wire=9p2000.L revision=6 epoch=...` before GPU
+admission. The SDK owns object fetches, submission acknowledgement and paced
+retry; Lom observes custody for every admitted upload and record. A refused or
+ambiguous submission terminates the service without replay.
+
+`lom content-proof --socket PATH` requires an explicitly admitted 9P file-export
+socket. It requests one panel allocation, uploads canonical pixels, raises a frame
+demand and submits one complete candidate under the returned permit. The
+diagnostic expects a renderer-failure outcome and resource release; it
+does not claim native presentation. A legacy IPC conformance host cannot run it.
 
 ## Architecture and development
 

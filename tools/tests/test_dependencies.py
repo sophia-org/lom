@@ -46,6 +46,14 @@ class DependencyBoundary(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(self.audit(f"{name} v1.0.0").returncode, 1)
 
+    def test_ipc_and_sophia_server_crates_are_rejected(self):
+        for name in ["sophia-shell-ipc", "sophia-protocol", "sophia-runtime",
+                     "sophia-session", "sophia-engine", "sophia-backend-live"]:
+            with self.subTest(name=name):
+                result = self.audit(f"lom v0.1.0\n{name} v0.1.0")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(name, result.stderr)
+
     def test_cargo_failure_cannot_be_reported_as_success(self):
         self.assertEqual(self.audit("", status=17).returncode, 17)
 

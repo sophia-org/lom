@@ -82,8 +82,10 @@ flowchart TD
 ```
 
 Arrows carry records, snapshots, commands, or typed handles. They do not grant
-access to another owner's mutable state. The driver owns one coherent protocol
-ledger; model observations are projections of it, not a second lifecycle owner.
+access to another owner's mutable state. The standalone Rust desktop SDK owns
+the 9P file connection and its bounded custody ledger. The driver observes
+admitted tickets and presentation outcomes; model observations are projections
+of those outcomes.
 
 ## 2. Data-oriented application state
 
