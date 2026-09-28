@@ -79,25 +79,15 @@ impl ContentPixels {
         &self.bytes
     }
 
-    /// Apply the immutable negotiated frame and chunk caps. The 48-byte prefix
-    /// includes the grant and resource identities. Non-final chunks fill every
-    /// available whole row; an arbitrarily fragmented row is never produced.
-    pub fn chunks(
-        &self,
-        max_frame_payload: u32,
-        max_chunk_bytes: u32,
-    ) -> Result<PixelChunks<'_>, String> {
-        if max_frame_payload > 65536 || max_chunk_bytes > 65488 {
-            return Err("content limits exceed the r5 frame ceiling".into());
-        }
-        let usable = max_frame_payload
-            .checked_sub(48)
-            .ok_or("content frame cannot hold its prefix")?
-            .min(max_chunk_bytes);
+    /// Split into upload chunks of whole rows within the negotiated
+    /// `max_chunk_bytes`, the file wire's canonical upload chunk. Non-final
+    /// chunks fill every available whole row; an arbitrarily fragmented row is
+    /// never produced. The SDK validates the Limits object this comes from.
+    pub fn chunks(&self, max_chunk_bytes: u32) -> Result<PixelChunks<'_>, String> {
         let row = self.width * 4;
-        let rows = usable / row;
+        let rows = max_chunk_bytes / row;
         if rows == 0 {
-            return Err("content frame cannot hold one complete row".into());
+            return Err("content chunk cannot hold one complete row".into());
         }
         Ok(PixelChunks {
             bytes: &self.bytes,

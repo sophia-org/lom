@@ -81,9 +81,7 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
         )
         .map_err(|e| format!("content allocation: {e:?}"))?;
     let pixels = ContentPixels::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 128])?;
-    let chunks = pixels
-        .chunks(limits.max_frame_payload, limits.max_chunk_bytes)?
-        .collect::<Vec<_>>();
+    let chunks = pixels.chunks(limits.max_chunk_bytes)?.collect::<Vec<_>>();
     let chunk_count = chunks.len() as u32;
     let resource = ContentResourceId {
         id: 1,

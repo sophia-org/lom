@@ -227,9 +227,7 @@ impl<R: ContentRenderer> ShellService<R> {
             rendered_scale_numerator: allocation.scale_numerator,
             rendered_scale_denominator: allocation.scale_denominator,
             pixel_format: 1,
-            chunk_count: pixels
-                .chunks(self.limits.max_frame_payload, self.limits.max_chunk_bytes)?
-                .count() as u32,
+            chunk_count: pixels.chunks(self.limits.max_chunk_bytes)?.count() as u32,
             total_bytes: pixels.bytes().len() as u64,
         });
         match self.enqueue_content(pending.upload_transaction, &begin) {
@@ -275,12 +273,10 @@ impl<R: ContentRenderer> ShellService<R> {
             .as_ref()
             .ok_or("upload lost its raster")?
             .pixels;
-        let chunk_count = pixels
-            .chunks(self.limits.max_frame_payload, self.limits.max_chunk_bytes)?
-            .count() as u32;
+        let chunk_count = pixels.chunks(self.limits.max_chunk_bytes)?.count() as u32;
         // At most four whole-row chunks (under 256 KiB) per output turn.
         for chunk in pixels
-            .chunks(self.limits.max_frame_payload, self.limits.max_chunk_bytes)?
+            .chunks(self.limits.max_chunk_bytes)?
             .skip(pending.next_chunk as usize)
             .take(self.upload_chunks_left)
         {
