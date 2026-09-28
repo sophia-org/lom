@@ -26,6 +26,10 @@ use sophia_shell_protocol::{
 };
 use std::{
     collections::{BTreeSet, VecDeque},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant, SystemTime},
 };
 
@@ -135,6 +139,7 @@ enum ResourceState {
 /// The owner serializes observations, uploads, pacing and retirement. The
 /// supplied renderer owns toolkit/GPU policy and returns immutable wire pixels.
 pub struct ShellService<R> {
+    stop: Arc<AtomicBool>,
     connection: ShellConnection,
     custody: custody::CustodyWatch,
     config: PanelConfig,
@@ -165,20 +170,39 @@ pub struct ShellService<R> {
 impl<R: ContentRenderer> ShellService<R> {
     /// Establish the initial limits, output facts and panel allocations.
     pub fn new(
-        mut connection: ShellConnection,
+        connection: ShellConnection,
         config: PanelConfig,
         theme: Theme,
         allowance: u32,
         renderer: R,
     ) -> Result<Self, String> {
-        let (_, ShellContentRecord::Limits(limits)) = receive_content(&mut connection)? else {
+        Self::new_until_stopped(
+            connection,
+            config,
+            theme,
+            allowance,
+            renderer,
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    pub(crate) fn new_until_stopped(
+        mut connection: ShellConnection,
+        config: PanelConfig,
+        theme: Theme,
+        allowance: u32,
+        renderer: R,
+        stop: Arc<AtomicBool>,
+    ) -> Result<Self, String> {
+        let (_, ShellContentRecord::Limits(limits)) = receive_content(&mut connection, &stop)?
+        else {
             return Err("first content record was not ContentLimits".into());
         };
         limits
             .validate()
             .map_err(|error| format!("invalid content limits: {error:?}"))?;
         let (facts_transaction, ShellContentRecord::OutputFacts(facts)) =
-            receive_content(&mut connection)?
+            receive_content(&mut connection, &stop)?
         else {
             return Err("ContentLimits was not followed by ContentOutputFacts".into());
         };
@@ -195,6 +219,7 @@ impl<R: ContentRenderer> ShellService<R> {
             )
             .map_err(|error| format!("initial output facts: {error:?}"))?;
         let mut service = Self {
+            stop,
             connection,
             custody: Default::default(),
             config,
@@ -228,7 +253,16 @@ impl<R: ContentRenderer> ShellService<R> {
     /// Make one bounded observation turn and, when dirty, present one complete
     /// replacement on every output. Returns the number of outputs presented.
     pub fn step(&mut self) -> Result<usize, String> {
+        self.check_stop()?;
         self.service_turn()
+    }
+
+    fn check_stop(&self) -> Result<(), String> {
+        if self.stop.load(Ordering::Relaxed) {
+            Err("shell stopping".into())
+        } else {
+            Ok(())
+        }
     }
 
     /// Maximum idle sleep before servicing queued work or an SDK retry.
@@ -270,6 +304,7 @@ impl<R: ContentRenderer> ShellService<R> {
     fn allocate_panels(&mut self, allowance: u32) -> Result<(), String> {
         let outputs = self.facts.outputs.clone();
         for (index, output) in outputs.into_iter().enumerate() {
+            self.check_stop()?;
             let request_id = u64::try_from(index + 1).map_err(|_| "too many outputs")?;
             let (desired_width, desired_height) = match self.config.position {
                 Position::Top | Position::Bottom => (output.local_width, self.config.height),
@@ -552,6 +587,7 @@ impl<R: ContentRenderer> ShellService<R> {
     fn wait_record(&mut self) -> Result<ShellContentRecord, String> {
         let deadline = Instant::now() + RESPONSE_TIMEOUT;
         loop {
+            self.check_stop()?;
             self.observe()?;
             if let Some((_, record)) = self.pending_content.pop_front() {
                 return Ok(record);
@@ -572,9 +608,13 @@ fn pixel_checksum(bytes: &[u8]) -> u64 {
 
 fn receive_content(
     connection: &mut ShellConnection,
+    stop: &AtomicBool,
 ) -> Result<(TransactionId, ShellContentRecord), String> {
     let deadline = Instant::now() + RESPONSE_TIMEOUT;
     loop {
+        if stop.load(Ordering::Relaxed) {
+            return Err("shell stopping".into());
+        }
         match connection.poll_content() {
             Ok(Some(record)) => return Ok(record),
             Ok(None) if Instant::now() < deadline => std::thread::sleep(IDLE_POLL),

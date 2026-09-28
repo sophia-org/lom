@@ -16,6 +16,7 @@ resolver = "3"
 missing_docs = "warn"
 
 [dependencies]
+signal-hook = "0.3.18"
 sophia-shell-gpu = { path = "crates/shell-gpu" }
 kdl = { version = "=6.7.1", default-features = false, features = ["span"] }
 chrono = { version = "0.4.42", default-features = false, features = ["std"] }

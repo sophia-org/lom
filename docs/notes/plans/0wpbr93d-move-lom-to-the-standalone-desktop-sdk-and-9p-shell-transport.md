@@ -75,6 +75,25 @@ Task t021 remains open for the external E2 binding and desktop promotion. The
 current desktop has not been modified; these tests make no GPU execution or
 native presentation claim.
 
+## Supervised stop (2026-09-27)
+
+`--serve` now handles SIGTERM and SIGINT, including as sandbox PID 1. The
+signal handler sets a flag; ordinary code stops service, drops the connection
+and renderer, and reports `lom_shell_shutdown schema=1 reason=signal`. It
+does not replay submissions or wait for server-owned retirement. The blocking
+SDK handshake retains its five-second bound and GPU startup its two-second
+bound. A worker still in a driver operation is reclaimed at process exit;
+shutdown is not evidence of GPU completion.
+
+The device-hidden offline gate passed 63 Rust tests, 17 tooling tests, doc
+tests, layout/dependency checks, formatting and strict Clippy. Four signal
+tests run the production serve owner with a GPU-free renderer as PID 1: a
+stalled handshake, initial content facts, and both signals during rendering.
+Removing cancellation from the initial-content wait makes the two-second
+latency assertion fail; the original source was restored and retested.
+Evidence is in `development-evidence/component-sigterm/lom-*.log`. Earlier
+test-sandbox setup failures are retained. No live component was replaced.
+
 ## Connections
 
 - [Architecture](../../../ARCHITECTURE.md)

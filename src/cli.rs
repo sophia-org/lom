@@ -3,6 +3,7 @@
 mod content_proof;
 mod preview;
 mod serve;
+mod shutdown;
 
 use crate::{
     config::{PanelConfig, Theme, parse_config, parse_theme},

@@ -112,6 +112,11 @@ Repository-tool tests live in `tools/tests/` and exercise the actual command or
 observable behavior. Gate regressions must prove both acceptance and rejection,
 especially at threshold boundaries; a helper-only assertion is not sufficient.
 
+The shutdown tests in `tests/support/shutdown.rs` are mounted at the private
+CLI serve boundary. They exercise the production signal handlers and service
+with a GPU-free renderer in a separate sandbox PID 1, without exporting a
+renderer-injection or signal API solely for tests.
+
 Keep reducer, widget, renderer, protocol, and native tests distinct. Simulated
 widget input is not proof of Sophia input routing. GPU completion is not proof
 of desktop presentation. Record missing harnesses and unvalidated claims rather

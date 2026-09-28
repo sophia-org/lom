@@ -92,6 +92,16 @@ socket readiness. The wait is capped at four milliseconds for renderer and
 clock observations. Sleeping unconditionally between service turns would add
 that delay to each dependent 9P operation in a panel update.
 
+The serve entry installs SIGTERM and SIGINT handlers before startup. Handlers
+only set a cancellation flag. Normal code stops service turns, closes the 9P
+connection and drops local owners, including when Lom is sandbox PID 1. Server
+disconnect handling owns retirement; shutdown never replays an uncertain action
+or claims that resources are already retired. Initial content waits also check
+cancellation. The SDK handshake remains bounded by five seconds and renderer
+startup by two seconds; a signal during either stage is observed when it returns.
+Process exit reclaims any renderer worker still inside a driver operation; this
+is not a GPU completion or device recovery guarantee.
+
 ## 2. Data-oriented application state
 
 Use plain records and indexed tables for panels, modules, popouts, actions,

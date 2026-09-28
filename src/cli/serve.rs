@@ -4,7 +4,7 @@ use crate::{
     config::parse_shell_config,
     render::{GpuGrant, RendererWorker},
     runtime::validate_theme,
-    service::ShellService,
+    service::{ContentRenderer, ShellService},
 };
 use sophia_shell_client::{ShellClientOptions, ShellConnection};
 use sophia_shell_protocol::{
@@ -15,6 +15,33 @@ use sophia_shell_protocol::{
 use std::{path::Path, time::Duration};
 
 pub(super) fn run() -> Result<(), String> {
+    run_with_renderer(|epoch| {
+        let grant = GpuGrant::from_environment(epoch)?;
+        let (renderer, admission) = RendererWorker::start(grant)?;
+        println!("{}", admission.record("lom")?);
+        Ok(renderer)
+    })
+}
+
+fn run_with_renderer<R: ContentRenderer>(
+    renderer: impl FnOnce(u64) -> Result<R, String>,
+) -> Result<(), String> {
+    let stop = super::shutdown::Shutdown::install()?;
+    let result = serve(&stop, renderer);
+    if stop.requested() {
+        // Dropping the connection revokes this owner's content and leaves any
+        // ambiguous submission with its original owner; nothing is replayed.
+        println!("lom_shell_shutdown schema=1 reason=signal");
+        Ok(())
+    } else {
+        result
+    }
+}
+
+fn serve<R: ContentRenderer>(
+    stop: &super::shutdown::Shutdown,
+    renderer: impl FnOnce(u64) -> Result<R, String>,
+) -> Result<(), String> {
     if std::env::var_os("SOPHIA_SHELL_SOCKET").is_some() {
         return Err("SOPHIA_SHELL_SOCKET is unsupported; use SOPHIA_SHELL_9P_SOCKET".into());
     }
@@ -45,20 +72,33 @@ pub(super) fn run() -> Result<(), String> {
         required_capabilities: capabilities,
         handshake_timeout: Duration::from_secs(5),
     };
+    stop.check()?;
     let connection = ShellConnection::connect_files(socket, options)
         .map_err(|error| format!("shell negotiation failed: {error}"))?;
+    stop.check()?;
     println!(
         "lom_shell_transport schema=1 wire=9p2000.L revision={} epoch={}",
         connection.welcome().selected_revision,
         connection.connection_epoch()
     );
-    let grant = GpuGrant::from_environment(connection.connection_epoch())?;
-    let (renderer, admission) = RendererWorker::start(grant)?;
-    println!("{}", admission.record("lom")?);
-    let mut service = ShellService::new(connection, config, theme, allowance, renderer)?;
-    loop {
+    let renderer = renderer(connection.connection_epoch())?;
+    stop.check()?;
+    let mut service = ShellService::new_until_stopped(
+        connection,
+        config,
+        theme,
+        allowance,
+        renderer,
+        stop.flag.clone(),
+    )?;
+    while !stop.requested() {
         if service.step()? == 0 {
             service.wait_for_work()?;
         }
     }
+    Ok(())
 }
+
+#[cfg(test)]
+#[path = "../../tests/support/shutdown.rs"]
+mod tests;
