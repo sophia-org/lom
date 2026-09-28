@@ -132,15 +132,25 @@ fn interaction_refresh_reuses_pixels_and_stays_clickable_with_old_release_held()
         },
     )
     .unwrap();
-    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let started = std::time::Instant::now();
+    let mut waits = 0;
+    let deadline = started + Duration::from_secs(3);
     while drained_rx.try_recv().is_err() {
         assert!(
             std::time::Instant::now() < deadline,
             "interaction refresh stalled behind old retirement"
         );
-        service.step().unwrap();
-        std::thread::yield_now();
+        if service.step().unwrap() == 0 {
+            waits += 1;
+            service.wait_for_work().unwrap();
+        } else {
+            std::thread::yield_now();
+        }
     }
+    eprintln!(
+        "refresh_elapsed_ms={} readiness_waits={waits}",
+        started.elapsed().as_millis()
+    );
     let rendered = calls.lock().unwrap();
     assert_eq!(rendered.iter().filter(|id| **id == OUTPUT.id).count(), 2);
     assert_eq!(

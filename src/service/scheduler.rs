@@ -2,6 +2,7 @@ use super::*;
 
 impl<R: ContentRenderer> ShellService<R> {
     pub(super) fn service_turn(&mut self) -> Result<usize, String> {
+        self.progressed = false;
         self.observe()?;
         self.upload_chunks_left = 4;
         if self
@@ -42,6 +43,7 @@ impl<R: ContentRenderer> ShellService<R> {
         {
             self.rendering_panel = None;
             self.begin_presentation(index, content)?;
+            self.progressed = true;
         }
         if self.rendering_panel.is_none() {
             let count = self.panels.len();
@@ -70,6 +72,7 @@ impl<R: ContentRenderer> ShellService<R> {
                 panel.dirty = false;
                 panel.interaction_dirty = false;
                 self.rendering_panel = Some(index);
+                self.progressed = true;
                 self.next_panel = (index + 1) % count;
                 break;
             }

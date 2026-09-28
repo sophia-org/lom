@@ -1853,7 +1853,7 @@ checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
 [[package]]
 name = "sophia-9p-client"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0da10428ad2ef85ff9f1c35c11238fbfebe81d04#0da10428ad2ef85ff9f1c35c11238fbfebe81d04"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=ea9cf651d37649fc1be889b3cfef6c1729b055f8#ea9cf651d37649fc1be889b3cfef6c1729b055f8"
 dependencies = [
  "rustix",
  "sophia-9p-records",
@@ -1862,18 +1862,19 @@ dependencies = [
 [[package]]
 name = "sophia-9p-records"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0da10428ad2ef85ff9f1c35c11238fbfebe81d04#0da10428ad2ef85ff9f1c35c11238fbfebe81d04"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=ea9cf651d37649fc1be889b3cfef6c1729b055f8#ea9cf651d37649fc1be889b3cfef6c1729b055f8"
 
 [[package]]
 name = "sophia-desktop-ids"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0da10428ad2ef85ff9f1c35c11238fbfebe81d04#0da10428ad2ef85ff9f1c35c11238fbfebe81d04"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=ea9cf651d37649fc1be889b3cfef6c1729b055f8#ea9cf651d37649fc1be889b3cfef6c1729b055f8"
 
 [[package]]
 name = "sophia-shell-client"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0da10428ad2ef85ff9f1c35c11238fbfebe81d04#0da10428ad2ef85ff9f1c35c11238fbfebe81d04"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=ea9cf651d37649fc1be889b3cfef6c1729b055f8#ea9cf651d37649fc1be889b3cfef6c1729b055f8"
 dependencies = [
+ "rustix",
  "sophia-9p-client",
  "sophia-9p-records",
  "sophia-shell-protocol",
@@ -1894,7 +1895,7 @@ dependencies = [
 [[package]]
 name = "sophia-shell-protocol"
 version = "0.1.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0da10428ad2ef85ff9f1c35c11238fbfebe81d04#0da10428ad2ef85ff9f1c35c11238fbfebe81d04"
+source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=ea9cf651d37649fc1be889b3cfef6c1729b055f8#ea9cf651d37649fc1be889b3cfef6c1729b055f8"
 dependencies = [
  "sophia-desktop-ids",
 ]

@@ -159,6 +159,7 @@ pub struct ShellService<R> {
     presentations: Vec<PendingPresentation>,
     rendering_panel: Option<usize>,
     next_panel: usize,
+    progressed: bool,
 }
 
 impl<R: ContentRenderer> ShellService<R> {
@@ -218,6 +219,7 @@ impl<R: ContentRenderer> ShellService<R> {
             presentations: Vec::with_capacity(pending_capacity),
             rendering_panel: None,
             next_panel: 0,
+            progressed: false,
         };
         service.allocate_panels(allowance)?;
         Ok(service)
@@ -239,6 +241,17 @@ impl<R: ContentRenderer> ShellService<R> {
                     .saturating_duration_since(Instant::now())
                     .min(IDLE_POLL)
             })
+    }
+
+    /// Wait for protocol readiness when the last bounded turn made no local
+    /// progress. The short ceiling also services renderer completions and clocks.
+    pub fn wait_for_work(&mut self) -> Result<(), String> {
+        if self.progressed {
+            return Ok(());
+        }
+        self.connection
+            .wait_for_io(self.idle_wait())
+            .map_err(|error| format!("shell readiness wait: {error}"))
     }
     fn transaction(&mut self) -> Result<TransactionId, String> {
         let value = self.next_transaction;

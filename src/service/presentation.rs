@@ -166,6 +166,7 @@ impl<R: ContentRenderer> ShellService<R> {
             model: panel.model.clone(),
         });
         self.panels[index].interaction_dirty = false;
+        self.progressed = true;
         Ok(())
     }
 
@@ -176,7 +177,9 @@ impl<R: ContentRenderer> ShellService<R> {
         if Instant::now() >= pending.deadline {
             return Err(format!("content {:?} response timed out", pending.phase));
         }
-        match pending.phase {
+        let old_phase = pending.phase;
+        let old_chunk = pending.next_chunk;
+        let progressed = match pending.phase {
             PresentationPhase::ResourceUnqueued => self.advance_resource_start(&mut pending)?,
             PresentationPhase::ResourceAccepted => self.advance_demand_enqueue(&mut pending)?,
             PresentationPhase::PermitGranted => self.advance_candidate_enqueue(&mut pending)?,
@@ -188,6 +191,8 @@ impl<R: ContentRenderer> ShellService<R> {
             PresentationPhase::CandidateSubmitted => self.advance_candidate(&mut pending)?,
             PresentationPhase::Presented => false,
         };
+        self.progressed |=
+            progressed || pending.phase != old_phase || pending.next_chunk != old_chunk;
         if pending.phase == PresentationPhase::Presented {
             self.finish_presentation(pending)?;
             return Ok(true);

@@ -87,6 +87,11 @@ the 9P file connection and its bounded custody ledger. The driver observes
 admitted tickets and presentation outcomes; model observations are projections
 of those outcomes.
 
+The service continues after bounded local progress and otherwise waits on SDK
+socket readiness. The wait is capped at four milliseconds for renderer and
+clock observations. Sleeping unconditionally between service turns would add
+that delay to each dependent 9P operation in a panel update.
+
 ## 2. Data-oriented application state
 
 Use plain records and indexed tables for panels, modules, popouts, actions,

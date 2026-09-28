@@ -24,8 +24,8 @@ masonry = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849de
 tokio = { version = "1.50", features = ["rt", "sync"] }
 wgpu = { version = "28.0", default-features = false, features = ["vulkan", "wgsl", "std", "parking_lot"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-sophia-shell-protocol = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "0da10428ad2ef85ff9f1c35c11238fbfebe81d04" }
-sophia-shell-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "0da10428ad2ef85ff9f1c35c11238fbfebe81d04" }
+sophia-shell-protocol = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "ea9cf651d37649fc1be889b3cfef6c1729b055f8" }
+sophia-shell-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "ea9cf651d37649fc1be889b3cfef6c1729b055f8" }
 
 [dev-dependencies]
 imaging_vello_cpu = "0.0.1"

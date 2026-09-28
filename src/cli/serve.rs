@@ -14,8 +14,6 @@ use sophia_shell_protocol::{
 };
 use std::{path::Path, time::Duration};
 
-const IDLE_POLL: Duration = Duration::from_millis(4);
-
 pub(super) fn run() -> Result<(), String> {
     if std::env::var_os("SOPHIA_SHELL_SOCKET").is_some() {
         return Err("SOPHIA_SHELL_SOCKET is unsupported; use SOPHIA_SHELL_9P_SOCKET".into());
@@ -60,7 +58,7 @@ pub(super) fn run() -> Result<(), String> {
     let mut service = ShellService::new(connection, config, theme, allowance, renderer)?;
     loop {
         if service.step()? == 0 {
-            std::thread::sleep(service.idle_wait().min(IDLE_POLL));
+            service.wait_for_work()?;
         }
     }
 }
