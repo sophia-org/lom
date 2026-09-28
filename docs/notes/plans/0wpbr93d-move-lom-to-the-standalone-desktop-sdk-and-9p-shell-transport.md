@@ -94,6 +94,22 @@ latency assertion fail; the original source was restored and retested.
 Evidence is in `development-evidence/component-sigterm/lom-*.log`. Earlier
 test-sandbox setup failures are retained. No live component was replaced.
 
+## Negotiated upload chunks (2026-09-28)
+
+The SDK pin is now `c1323401b7e336606408499b13097d1270a2319d`. It accepts
+file resource descriptions under reduced chunk limits and leaves the exact
+layout check with the content owner. Lom uses `max_chunk_bytes` directly;
+the old frame-derived minimum was equal on every valid Limits object.
+
+The full offline `tools/check.sh` passed 64 Rust tests, tooling tests,
+layout/dependency checks, formatting and strict clippy. The pixel test covers
+representative frame caps and exact-row boundaries. Earlier mutation controls
+are recorded in `ipc-removal-inventory/t268-rust-consumers.md`; the final pin
+gate is `ipc-retirement/t268-lom-c132340-check.log`. The private Cargo cache
+was explicitly seeded with the published SDK commit from its local source;
+the gate had no network, display or devices. No installed component changed,
+and no GPU or native presentation result is claimed.
+
 ## Connections
 
 - [Architecture](../../../ARCHITECTURE.md)

@@ -67,10 +67,10 @@ fn dimension_product_length_and_negotiated_row_limits_are_joint_constraints() {
 /// object the SDK accepts, the earlier `min(max_frame_payload - 48,
 /// max_chunk_bytes)` is the same value, so each chunk sequence is unchanged:
 /// this checks that equivalence and the SDK's own layout at whole-row
-/// boundaries, for one chunk under every valid frame cap. Limits the SDK
+/// boundaries, for each chunk under representative valid frame caps. Limits the SDK
 /// refuses are its concern, not this adapter's.
 #[test]
-fn canonical_chunks_match_the_sdk_layout_under_every_valid_frame_cap() {
+fn canonical_chunks_match_the_sdk_layout_at_representative_frame_caps() {
     let grant = ContentGrant {
         connection_epoch: 1,
         content_grant_epoch: 1,
