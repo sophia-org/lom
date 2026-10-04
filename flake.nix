@@ -37,13 +37,28 @@
       };
       cargoArtifacts = craneLib.buildDepsOnly common;
 
+      # wgpu dlopens the Vulkan loader, which by default searches
+      # /run/opengl-driver, /etc and /usr/share for drivers. On a host without
+      # Nix's driver link it would load the host's drivers, whose libraries
+      # this closure's glibc cannot resolve. Lom's protection domain clears the
+      # environment, so the compiled-in paths are the only ones: point them at
+      # the pinned Mesa's manifests and nowhere else.
+      vulkanLoader = pkgs.vulkan-loader.overrideAttrs (old: {
+        cmakeFlags =
+          builtins.filter (flag: !pkgs.lib.hasPrefix "-DSYSCONFDIR=" flag) old.cmakeFlags
+          ++ [
+            "-DSYSCONFDIR=${pkgs.mesa}/share"
+            "-DFALLBACK_DATA_DIRS=${placeholder "out"}/share"
+            "-DFALLBACK_CONFIG_DIRS=${placeholder "out"}/etc/xdg"
+          ];
+      });
+
       # The binary niltempus builds: cargo build --locked --release.
       lom = craneLib.buildPackage (common // {
         inherit cargoArtifacts;
         doCheck = false;
-        # wgpu loads the Vulkan loader with dlopen; give it the pinned one.
         postFixup = ''
-          patchelf --add-rpath ${pkgs.vulkan-loader}/lib $out/bin/lom
+          patchelf --add-rpath ${vulkanLoader}/lib $out/bin/lom
         '';
       });
 
@@ -67,6 +82,7 @@
     {
       packages.${system} = {
         inherit lom;
+        vulkan-loader = vulkanLoader;
         default = lom;
       };
 
@@ -101,7 +117,7 @@
       # Tools and environment only: no filesystem, device or network isolation.
       devShells.${system}.default = craneLib.devShell {
         packages = [ pkgs.pkg-config pkgs.fontconfig pkgs.python3 ];
-        LD_LIBRARY_PATH = "${pkgs.vulkan-loader}/lib";
+        LD_LIBRARY_PATH = "${vulkanLoader}/lib";
       };
     };
 }
