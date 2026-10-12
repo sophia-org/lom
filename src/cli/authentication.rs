@@ -72,6 +72,9 @@ pub(super) fn connect(
                 .map_err(|error| error.to_string())?;
         }
     }
+    if stopping() {
+        return Err("shell stopping".into());
+    }
     let admitted = auth
         .into_authenticated()
         .map_err(|error| error.to_string())?;

@@ -165,3 +165,10 @@ and logs; its manifest SHA-256 is
 `67e012aafb15696606393daa9848d5671a5b6ee123829666bf599aecbbf91c14`.
 Authenticated owner/recovery interoperability and native acceptance remain
 separate gates. No live session or installed component was changed.
+
+A follow-up checks stop again after authentication, before entering the shell
+negotiation handshake. The complete device-hidden gate again passed 66 Rust
+tests and all tooling/Clippy checks. Package `t317-lom-authentication-stop-01`
+has manifest SHA-256
+`fd4fa1ecf7564d1531cb68520dda4f5c9320bb94c606e73b9a30c81407e5de0f`.
+This preserves the same local-only qualification boundary.
