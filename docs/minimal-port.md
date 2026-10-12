@@ -142,3 +142,26 @@ transport/GPU-bridge candidates. These tasks remain open:
 Configuration replacement advances the local module generation and clears old
 popout intent. Allocation refusal clears matching intent. A local popout,
 rendered image or returned effect is never recorded as native visibility.
+
+## Authenticated launch client checkpoint
+
+On 2026-10-12, both serve and content-proof startup were migrated to the signed
+Rust SDK `9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce`. A provisioned launch fd
+selects the bounded `shell` / `bar` conversation, then the shell connection
+continues on its authenticated root. The generation channel remains owned until
+the connection/service is torn down. Invalid fd discovery or authentication
+failure cannot select the standalone plain-attach path. No GPU permission or
+rendering behavior changes.
+
+Device-hidden `tools/check.sh` passed 66 Rust tests, with one parent-invoked
+shutdown child ignored as a standalone test, plus 17 tooling tests. It also
+passed source layout, dependency-boundary checks, formatting, doc tests and
+strict Clippy. New local tests cover decimal descriptor bounds, standard-fd
+refusal and actual close-on-exec adoption over a private socket pair. These do
+not prove the successful afid conversation through Lom's production owner.
+
+Package `t317-lom-authentication-01` retains the dynamic candidate file inventory
+and logs; its manifest SHA-256 is
+`67e012aafb15696606393daa9848d5671a5b6ee123829666bf599aecbbf91c14`.
+Authenticated owner/recovery interoperability and native acceptance remain
+separate gates. No live session or installed component was changed.

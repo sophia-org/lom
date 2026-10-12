@@ -16,7 +16,7 @@ use crate::protocol::ContentPixels;
 pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     let capabilities =
         SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE;
-    let mut connection = ShellConnection::connect_files(
+    let (mut connection, _generation_channel) = super::authentication::connect(
         socket,
         ShellClientOptions {
             minimum_revision: 6,
@@ -24,6 +24,7 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
             required_capabilities: capabilities,
             handshake_timeout: Duration::from_secs(5),
         },
+        || false,
     )
     .map_err(|error| format!("content negotiation failed: {error}"))?;
     let ShellContentRecord::Limits(limits) = receive(&mut connection)? else {

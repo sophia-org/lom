@@ -1,5 +1,6 @@
 //! Command-line diagnostics, explicitly separated from native shell startup.
 
+mod authentication;
 mod content_proof;
 mod preview;
 mod serve;

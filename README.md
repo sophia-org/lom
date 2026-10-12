@@ -94,6 +94,17 @@ admission. The SDK owns object fetches, submission acknowledgement and paced
 retry; Lom observes custody for every admitted upload and record. A refused or
 ambiguous submission terminates the service without replay.
 
+With `SOPHIA_LAUNCH_AUTH_FD` present, both entry points adopt the provisioned
+generation channel, mark it close-on-exec, and use the SDK's bounded launch
+conversation for the `shell` / `bar` claim. Session selects authority; these
+strings do not grant it. The shell client continues on the authenticated root
+without another attach, and retains the generation channel through shutdown.
+Malformed descriptors and authentication errors fail startup without a plain
+attach retry. Supplied standalone conformance sockets without that variable
+retain their existing plain-attach path. The development SDK pin is signed
+`9b9e9bf1b0c7ad194f507dfdb383d25ddc1553ce`; this is not a release or native
+acceptance claim.
+
 `lom content-proof --socket PATH` requires an explicitly admitted 9P file-export
 socket. It requests one panel allocation, uploads canonical pixels, raises a frame
 demand and submits one complete candidate under the returned permit. The

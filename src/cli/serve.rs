@@ -6,7 +6,7 @@ use crate::{
     runtime::validate_theme,
     service::{ContentRenderer, ShellService},
 };
-use sophia_shell_client::{ShellClientOptions, ShellConnection};
+use sophia_shell_client::ShellClientOptions;
 use sophia_shell_protocol::{
     SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT, SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE,
     SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER, SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION,
@@ -73,8 +73,9 @@ fn serve<R: ContentRenderer>(
         handshake_timeout: Duration::from_secs(5),
     };
     stop.check()?;
-    let connection = ShellConnection::connect_files(socket, options)
-        .map_err(|error| format!("shell negotiation failed: {error}"))?;
+    let (connection, _generation_channel) =
+        super::authentication::connect(socket, options, || stop.requested())
+            .map_err(|error| format!("shell negotiation failed: {error}"))?;
     stop.check()?;
     println!(
         "lom_shell_transport schema=1 wire=9p2000.L revision={} epoch={}",
