@@ -17,7 +17,8 @@ fn serve_reports_the_file_transport_before_requiring_a_gpu_grant() {
                 | SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
                 | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
                 | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
-                | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION,
+                | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION
+                | sophia_shell_client::IMAGE_CAPABILITY_SEALED,
         );
         wait.recv_timeout(Duration::from_secs(10)).unwrap();
     });
@@ -37,7 +38,7 @@ fn serve_reports_the_file_transport_before_requiring_a_gpu_grant() {
     assert_eq!(output.status.code(), Some(2));
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "lom_shell_transport schema=1 wire=9p2000.L revision=6 epoch=41\n"
+        "lom_shell_transport schema=1 wire=9p2000.L revision=9 epoch=41\n"
     );
     assert!(
         String::from_utf8(output.stderr)
@@ -59,7 +60,9 @@ fn diagnostic_uploads_on_9p_and_reports_only_renderer_failure() {
     let server = std::thread::spawn(move || {
         let mut peer = Peer::new(
             listener.accept().unwrap().0,
-            SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE | SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER,
+            SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
+                | SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
+                | sophia_shell_client::IMAGE_CAPABILITY_SEALED,
         );
         send(
             &mut peer,
@@ -116,45 +119,14 @@ fn diagnostic_uploads_on_9p_and_reports_only_renderer_failure() {
                 acknowledged_anchor: ContentPixelRect::default(),
             }),
         );
-        let (tx, ShellContentRecord::ResourceBegin(begin)) = receive(&mut peer) else {
-            panic!("begin")
+        // One sealed ISB offer, verified by the peer before it sent
+        // Accepted + SourceReleased (Settled disposition 1).
+        let image = receive_image(&mut peer);
+        assert_eq!((image.width, image.height, image.declared_bytes), (2, 1, 8));
+        let resource = ContentResourceId {
+            id: image.resource,
+            generation: image.resource_generation,
         };
-        assert_eq!(
-            (begin.width_px, begin.height_px, begin.total_bytes),
-            (2, 1, 8)
-        );
-        send_tx(
-            &mut peer,
-            tx,
-            ShellContentRecord::ResourceStatus(ContentResourceStatus {
-                grant: GRANT,
-                resource: begin.resource,
-                status: 1,
-                reason: 0,
-                next_ordinal: 0,
-                admitted_bytes: 8,
-            }),
-        );
-        let (_, ShellContentRecord::ResourceChunk(chunk)) = receive(&mut peer) else {
-            panic!("bytes")
-        };
-        assert_eq!(chunk.bytes.len(), 8);
-        let (_, ShellContentRecord::ResourceEnd(end)) = receive(&mut peer) else {
-            panic!("end")
-        };
-        assert_eq!(end.resource, begin.resource);
-        send_tx(
-            &mut peer,
-            tx,
-            ShellContentRecord::ResourceStatus(ContentResourceStatus {
-                grant: GRANT,
-                resource: begin.resource,
-                status: 2,
-                reason: 0,
-                next_ordinal: 1,
-                admitted_bytes: 8,
-            }),
-        );
         let (tx, ShellContentRecord::FrameDemand(demand)) = receive(&mut peer) else {
             panic!("demand")
         };
@@ -181,7 +153,7 @@ fn diagnostic_uploads_on_9p_and_reports_only_renderer_failure() {
         let (_, ShellContentRecord::CandidateEnd(_)) = receive(&mut peer) else {
             panic!("candidate end")
         };
-        assert_eq!(chunk.placements[0].resource, begin.resource);
+        assert_eq!(chunk.placements[0].resource, resource);
         send_tx(
             &mut peer,
             tx,
@@ -199,7 +171,7 @@ fn diagnostic_uploads_on_9p_and_reports_only_renderer_failure() {
         let (tx, ShellContentRecord::ResourceRetire(retire)) = receive(&mut peer) else {
             panic!("retire")
         };
-        assert_eq!(retire.resource, begin.resource);
+        assert_eq!(retire.resource, resource);
         send_tx(
             &mut peer,
             tx,

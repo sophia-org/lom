@@ -13,19 +13,39 @@ use crate::{
     ui::ContentTargetLayout,
 };
 use chrono::{DateTime, FixedOffset, Utc};
-use sophia_shell_client::{ContentActionDispatch, ContentLifecycle, ShellConnection};
+use sophia_shell_client::{
+    ContentActionDispatch, ContentLifecycle, ProducerRoleBounds, ShellConnection, ShellImageConfig,
+};
+
+/// Absolute CLOCK_MONOTONIC milliseconds, paired with an `Instant`
+/// taken at the same moment for the image adapter's clock domain.
+fn monotonic_ms() -> Result<u64, String> {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid out-pointer for the duration of the call.
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) } != 0 {
+        return Err("CLOCK_MONOTONIC unavailable".into());
+    }
+    let ms = (ts.tv_sec as u64)
+        .checked_mul(1_000)
+        .and_then(|ms| ms.checked_add((ts.tv_nsec / 1_000_000) as u64))
+        .ok_or("CLOCK_MONOTONIC overflow")?;
+    Ok(ms)
+}
 use sophia_shell_protocol::{
     ContentAction, ContentActionAck, ContentAllocationId, ContentAllocationRequest,
     ContentAllocationResult, ContentCandidateBegin, ContentCandidateChunk, ContentCandidateEnd,
     ContentFrameDemand, ContentFramePermit, ContentMargins, ContentOutputFacts,
-    ContentOutputFactsEntry, ContentPixelRect, ContentPlacement, ContentReason,
-    ContentResourceBegin, ContentResourceChunk, ContentResourceEnd, ContentResourceId,
+    ContentOutputFactsEntry, ContentPixelRect, ContentPlacement, ContentReason, ContentResourceId,
     ContentResourceRetire, ContentSurface, ContentTarget, ShellContentRecord,
     ShellIndicatorActivation, ShellIndicatorActivationStatus, ShellIndicatorSnapshot,
     TransactionId,
 };
 use std::{
     collections::{BTreeSet, VecDeque},
+    path::PathBuf,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -152,7 +172,6 @@ pub struct ShellService<R> {
     next_demand: u64,
     next_candidate_generation: u64,
     next_resource: u64,
-    upload_chunks_left: usize,
     last_second: u64,
     latest_indicators: Option<ShellIndicatorSnapshot>,
     pending_content: VecDeque<(TransactionId, ShellContentRecord)>,
@@ -175,6 +194,7 @@ impl<R: ContentRenderer> ShellService<R> {
         theme: Theme,
         allowance: u32,
         renderer: R,
+        endpoint_dir: PathBuf,
     ) -> Result<Self, String> {
         Self::new_until_stopped(
             connection,
@@ -183,6 +203,7 @@ impl<R: ContentRenderer> ShellService<R> {
             allowance,
             renderer,
             Arc::new(AtomicBool::new(false)),
+            endpoint_dir,
         )
     }
 
@@ -193,6 +214,7 @@ impl<R: ContentRenderer> ShellService<R> {
         allowance: u32,
         renderer: R,
         stop: Arc<AtomicBool>,
+        endpoint_dir: PathBuf,
     ) -> Result<Self, String> {
         let (_, ShellContentRecord::Limits(limits)) = receive_content(&mut connection, &stop)?
         else {
@@ -201,6 +223,29 @@ impl<R: ContentRenderer> ShellService<R> {
         limits
             .validate()
             .map_err(|error| format!("invalid content limits: {error:?}"))?;
+        // Image admission is mandatory on this client: enable the
+        // sealed channel from the negotiated limits, or fail startup.
+        // There is no byte-upload fallback.
+        {
+            let origin = Instant::now();
+            let origin_ms = monotonic_ms()?;
+            let image = ShellImageConfig {
+                endpoint_dir,
+                bounds: ProducerRoleBounds {
+                    max_resource_bytes: limits.max_resource_bytes,
+                    max_width: limits.max_width_px,
+                    max_height: limits.max_height_px,
+                    max_admitted_outputs: limits.max_outputs,
+                    transfer_slots: limits.max_open_transfers,
+                },
+                transfer_timeout_ms: limits.transfer_timeout_ms,
+                startup_deadline_ms: origin_ms + u64::from(limits.transfer_timeout_ms),
+                formats_capacity: 4096,
+            };
+            connection
+                .enable_image(image, origin, origin_ms)
+                .map_err(|error| format!("sealed image channel is required: {error}"))?;
+        }
         let (facts_transaction, ShellContentRecord::OutputFacts(facts)) =
             receive_content(&mut connection, &stop)?
         else {
@@ -235,7 +280,6 @@ impl<R: ContentRenderer> ShellService<R> {
             next_demand: 1,
             next_candidate_generation: 1,
             next_resource: 1,
-            upload_chunks_left: 4,
             last_second: unix_second(),
             latest_indicators: None,
             pending_content: VecDeque::new(),

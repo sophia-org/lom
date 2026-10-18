@@ -12,12 +12,12 @@ use sophia_shell_client::{ShellClientOptions, ShellConnection};
 use sophia_shell_protocol::{
     ContentAction, ContentAllocationId, ContentAllocationResult, ContentFramePermit, ContentGrant,
     ContentLogicalRect, ContentMargins, ContentOutputFacts, ContentOutputFactsEntry,
-    ContentOutputId, ContentPixelRect, ContentReason, ContentResourceId, ContentResourceStatus,
-    OutputId, SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT,
-    SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE, SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER,
-    SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION, SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS,
-    ShellContentRecord, ShellIndicator, ShellIndicatorActivationOutcome,
-    ShellIndicatorActivationStatus, ShellIndicatorSnapshot, TransactionId,
+    ContentOutputId, ContentPixelRect, ContentReason, ContentResourceId, OutputId,
+    SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT, SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE,
+    SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER, SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION,
+    SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS, ShellContentRecord, ShellIndicator,
+    ShellIndicatorActivationOutcome, ShellIndicatorActivationStatus, ShellIndicatorSnapshot,
+    TransactionId,
 };
 use std::{
     os::unix::net::{UnixListener, UnixStream},
@@ -52,8 +52,9 @@ fn a_refused_file_submission_is_reported_without_waiting_for_an_owner_outcome() 
     ));
     let listener = UnixListener::bind(&path).unwrap();
     let (done, wait) = std::sync::mpsc::channel();
-    let capabilities =
-        SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE | SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER;
+    let capabilities = SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
+        | SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
+        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
     let server = std::thread::spawn(move || {
         let peer = Peer::with_refusal(
             listener.accept().unwrap().0,
@@ -80,8 +81,8 @@ fn a_refused_file_submission_is_reported_without_waiting_for_an_owner_outcome() 
     let connection = ShellConnection::connect_files(
         &path,
         ShellClientOptions {
-            minimum_revision: 6,
-            maximum_revision: 6,
+            minimum_revision: 9,
+            maximum_revision: 9,
             required_capabilities: capabilities,
             handshake_timeout: Duration::from_secs(2),
         },
@@ -89,8 +90,14 @@ fn a_refused_file_submission_is_reported_without_waiting_for_an_owner_outcome() 
     .unwrap();
     let (config, theme) =
         parse_shell_config(include_str!("../examples/minimal/shell.kdl")).unwrap();
-    let Err(error) = ShellService::new(connection, config, theme, 48, ImmediateRenderer(None))
-    else {
+    let Err(error) = ShellService::new(
+        connection,
+        config,
+        theme,
+        48,
+        ImmediateRenderer(None),
+        path.parent().unwrap().to_path_buf(),
+    ) else {
         panic!("refused allocation must fail the service");
     };
     assert!(error.contains("refused: errno=13"), "{error}");
@@ -239,12 +246,13 @@ fn persistent_service_negotiates_allocates_uploads_and_waits_for_native_presenta
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
-        | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION;
+        | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION
+        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
     let connection = ShellConnection::connect_files(
         &path,
         ShellClientOptions {
-            minimum_revision: 6,
-            maximum_revision: 6,
+            minimum_revision: 9,
+            maximum_revision: 9,
             required_capabilities: capabilities,
             handshake_timeout: Duration::from_secs(2),
         },
@@ -265,6 +273,7 @@ fn persistent_service_negotiates_allocates_uploads_and_waits_for_native_presenta
             gate_first: true,
             target_message: None,
         },
+        path.parent().unwrap().to_path_buf(),
     )
     .unwrap();
     let mut presented = 0;
@@ -300,12 +309,13 @@ fn candidate_generations_are_unique_across_outputs() {
     });
     let capabilities = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
-        | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS;
+        | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
+        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
     let connection = ShellConnection::connect_files(
         &path,
         ShellClientOptions {
-            minimum_revision: 6,
-            maximum_revision: 6,
+            minimum_revision: 9,
+            maximum_revision: 9,
             required_capabilities: capabilities,
             handshake_timeout: Duration::from_secs(2),
         },
@@ -313,8 +323,15 @@ fn candidate_generations_are_unique_across_outputs() {
     .unwrap();
     let (config, theme) =
         parse_shell_config(include_str!("../examples/minimal/shell.kdl")).unwrap();
-    let mut service =
-        ShellService::new(connection, config, theme, 48, ImmediateRenderer(None)).unwrap();
+    let mut service = ShellService::new(
+        connection,
+        config,
+        theme,
+        48,
+        ImmediateRenderer(None),
+        path.parent().unwrap().to_path_buf(),
+    )
+    .unwrap();
     let mut presented = 0;
     let deadline = std::time::Instant::now() + Duration::from_secs(2);
     while presented < 4 || drained_receiver.try_recv().is_err() {
@@ -337,7 +354,8 @@ fn serve_two_outputs(
 ) {
     let expected = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
-        | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS;
+        | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
+        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
     let mut stream = Peer::new(stream, expected);
     initialize_two_outputs(&mut stream);
     service_multiplex::exchange(&mut stream);
@@ -426,7 +444,8 @@ fn serve_one(
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
-        | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION;
+        | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION
+        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
     let mut stream = Peer::new(stream, expected);
     stream.indicators(
         TransactionId::from_raw(3),
@@ -597,52 +616,24 @@ fn serve_frame(
     presentation_epoch: u64,
     target_count: u32,
 ) -> ContentResourceId {
-    let (upload_tx, ShellContentRecord::ResourceBegin(begin)) = receive(stream) else {
-        panic!("expected resource begin");
-    };
+    // One sealed ISB offer, verified by the peer before it sent
+    // Accepted + SourceReleased (Settled disposition 1).
+    let image = receive_image(stream);
     assert_eq!(
-        (begin.width_px, begin.height_px, begin.total_bytes),
+        (image.width, image.height, image.declared_bytes),
         (8, 48, 1536)
     );
+    let resource = ContentResourceId {
+        id: image.resource,
+        generation: image.resource_generation,
+    };
     assert_eq!(
-        begin.resource,
+        resource,
         ContentResourceId {
             id: expected_candidate,
             generation: 1,
         },
         "new resource IDs must first appear in global grant order"
-    );
-    send_tx(
-        stream,
-        upload_tx,
-        ShellContentRecord::ResourceStatus(ContentResourceStatus {
-            grant: GRANT,
-            resource: begin.resource,
-            status: 1,
-            reason: ContentReason::None as u16,
-            next_ordinal: 0,
-            admitted_bytes: 1536,
-        }),
-    );
-    let (_, ShellContentRecord::ResourceChunk(chunk)) = receive(stream) else {
-        panic!("expected resource chunk only after transfer admission");
-    };
-    assert_eq!(chunk.bytes.len(), 1536);
-    let (_, ShellContentRecord::ResourceEnd(end)) = receive(stream) else {
-        panic!("expected resource end");
-    };
-    assert_eq!(end.resource, begin.resource);
-    send_tx(
-        stream,
-        upload_tx,
-        ShellContentRecord::ResourceStatus(ContentResourceStatus {
-            grant: GRANT,
-            resource: begin.resource,
-            status: 2,
-            reason: ContentReason::None as u16,
-            next_ordinal: 1,
-            admitted_bytes: 1536,
-        }),
     );
     let (demand_tx, ShellContentRecord::FrameDemand(demand)) = receive(stream) else {
         panic!("expected frame demand");
@@ -676,7 +667,7 @@ fn serve_frame(
     assert_eq!(candidate.pacing_permit, permit_id);
     assert_eq!(candidate.target_count, target_count);
     assert_eq!(chunk.surfaces[0].reservation_extent, 48);
-    assert_eq!(chunk.placements[0].resource, begin.resource);
+    assert_eq!(chunk.placements[0].resource, resource);
     assert_eq!(chunk.targets.len(), target_count as usize);
     assert_eq!(end.candidate_generation, candidate.candidate_generation);
     for (kind, epoch) in [(1, 0), (2, presentation_epoch)] {
@@ -695,7 +686,14 @@ fn serve_frame(
             }),
         );
     }
-    begin.resource
+    resource
+}
+
+fn receive_image(stream: &mut Peer) -> sophia_shell_protocol::shell_files::ShellImageMetadata {
+    let Message::Image(metadata) = stream.receive() else {
+        panic!("expected sealed image offer")
+    };
+    metadata
 }
 
 fn send(stream: &mut Peer, transaction: u64, record: ShellContentRecord) {

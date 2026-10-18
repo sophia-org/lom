@@ -94,7 +94,8 @@ fn interaction_refresh_reuses_pixels_and_stays_clickable_with_old_release_held()
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
-        | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION;
+        | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION
+        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
     let server = std::thread::spawn(move || {
         let mut stream = Peer::new(listener.accept().unwrap().0, caps);
         // The file feed is fetched independently. Publish the initial view
@@ -108,8 +109,8 @@ fn interaction_refresh_reuses_pixels_and_stays_clickable_with_old_release_held()
     let connection = ShellConnection::connect_files(
         &path,
         ShellClientOptions {
-            minimum_revision: 6,
-            maximum_revision: 6,
+            minimum_revision: 9,
+            maximum_revision: 9,
             required_capabilities: caps,
             handshake_timeout: Duration::from_secs(2),
         },
@@ -130,6 +131,7 @@ fn interaction_refresh_reuses_pixels_and_stays_clickable_with_old_release_held()
             calls: calls.clone(),
             ready: None,
         },
+        path.parent().unwrap().to_path_buf(),
     )
     .unwrap();
     let started = std::time::Instant::now();
@@ -178,7 +180,15 @@ fn exchange(stream: &mut Peer) {
     let mut next_event = 100;
     loop {
         let message = stream.receive();
-        if let Message::Activation(transaction, activation) = message {
+        if let Message::Image(metadata) = message {
+            // One sealed ISB offer, already verified by the peer
+            // before Accepted + SourceReleased were sent.
+            assert!(resources.insert(metadata.resource, metadata).is_none());
+            assert!(
+                resources.len() <= 3,
+                "unchanged output must not upload another raster"
+            );
+        } else if let Message::Activation(transaction, activation) = message {
             assert_eq!(activation.action, activation.indicator + 10);
             assert!((1..=3).contains(&activation.snapshot_generation));
             activations += 1;
@@ -197,45 +207,6 @@ fn exchange(stream: &mut Peer) {
                 unreachable!()
             };
             match *record {
-                ShellContentRecord::ResourceBegin(begin) => {
-                    assert!(
-                        resources
-                            .insert(begin.resource.id, (transaction, begin.clone()))
-                            .is_none()
-                    );
-                    assert!(
-                        resources.len() <= 3,
-                        "unchanged output must not upload another raster"
-                    );
-                    send_tx(
-                        stream,
-                        transaction,
-                        ShellContentRecord::ResourceStatus(ContentResourceStatus {
-                            grant: GRANT,
-                            resource: begin.resource,
-                            status: 1,
-                            reason: 0,
-                            next_ordinal: 0,
-                            admitted_bytes: begin.total_bytes,
-                        }),
-                    );
-                }
-                ShellContentRecord::ResourceChunk(_) => {}
-                ShellContentRecord::ResourceEnd(end) => {
-                    let (tx, begin) = &resources[&end.resource.id];
-                    send_tx(
-                        stream,
-                        *tx,
-                        ShellContentRecord::ResourceStatus(ContentResourceStatus {
-                            grant: GRANT,
-                            resource: end.resource,
-                            status: 2,
-                            reason: 0,
-                            next_ordinal: end.chunk_count,
-                            admitted_bytes: begin.total_bytes,
-                        }),
-                    );
-                }
                 ShellContentRecord::FrameDemand(demand) => send_tx(
                     stream,
                     transaction,

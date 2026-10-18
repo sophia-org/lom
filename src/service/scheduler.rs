@@ -4,7 +4,6 @@ impl<R: ContentRenderer> ShellService<R> {
     pub(super) fn service_turn(&mut self) -> Result<usize, String> {
         self.progressed = false;
         self.observe()?;
-        self.upload_chunks_left = 4;
         if self
             .panels
             .iter()

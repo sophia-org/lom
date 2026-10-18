@@ -11,49 +11,22 @@ pub(super) fn exchange(stream: &mut Peer) {
     let mut outputs = BTreeSet::new();
     let mut retired = Vec::new();
     loop {
-        let (transaction, record) = receive(stream);
+        // Sealed images arrive as peer-verified offers, interleaved
+        // with the content records below.
+        let (transaction, record) = loop {
+            match stream.receive() {
+                Message::Image(metadata) => {
+                    assert_eq!(metadata.resource, first_use + 1);
+                    first_use += 1;
+                    assert_eq!(metadata.resource_generation, 1);
+                    assert_eq!(metadata.declared_bytes, 1536);
+                    resources.insert(metadata.resource, metadata);
+                }
+                Message::Content(transaction, record) => break (transaction, *record),
+                Message::Activation(..) => panic!("unexpected multiplexed activation"),
+            }
+        };
         match record {
-            ShellContentRecord::ResourceBegin(begin) => {
-                assert_eq!(begin.resource.id, first_use + 1);
-                first_use += 1;
-                assert_eq!(begin.resource.generation, 1);
-                assert_eq!(begin.total_bytes, 1536);
-                resources.insert(begin.resource.id, (transaction, begin.clone(), 0usize));
-                send_tx(
-                    stream,
-                    transaction,
-                    ShellContentRecord::ResourceStatus(ContentResourceStatus {
-                        grant: GRANT,
-                        resource: begin.resource,
-                        status: 1,
-                        reason: 0,
-                        next_ordinal: 0,
-                        admitted_bytes: begin.total_bytes,
-                    }),
-                );
-            }
-            ShellContentRecord::ResourceChunk(chunk) => {
-                let (_, begin, bytes) = resources.get_mut(&chunk.resource.id).unwrap();
-                assert_eq!(chunk.resource, begin.resource);
-                assert_eq!(chunk.offset as usize, *bytes);
-                *bytes += chunk.bytes.len();
-            }
-            ShellContentRecord::ResourceEnd(end) => {
-                let (origin, begin, bytes) = &resources[&end.resource.id];
-                assert_eq!(*bytes as u64, begin.total_bytes);
-                send_tx(
-                    stream,
-                    *origin,
-                    ShellContentRecord::ResourceStatus(ContentResourceStatus {
-                        grant: GRANT,
-                        resource: end.resource,
-                        status: 2,
-                        reason: 0,
-                        next_ordinal: end.chunk_count,
-                        admitted_bytes: end.total_bytes,
-                    }),
-                );
-            }
             ShellContentRecord::FrameDemand(demand) => {
                 send_tx(
                     stream,

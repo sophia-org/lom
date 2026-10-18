@@ -3,9 +3,7 @@ use super::*;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PresentationPhase {
     ResourceUnqueued,
-    ResourceBegun,
-    ResourceUploading,
-    ResourceUploaded,
+    ImageOffered,
     ResourceAccepted,
     DemandSent,
     PermitGranted,
@@ -21,8 +19,11 @@ pub(super) struct PendingPresentation {
     old: Option<ContentResourceId>,
     candidate: u64,
     demand_id: u64,
-    upload_transaction: TransactionId,
-    next_chunk: u32,
+    /// The sealed source, retained only while `image_begin` refuses
+    /// it with Busy; the producer owns it after admission.
+    source: Option<std::os::fd::OwnedFd>,
+    offer: Option<u64>,
+    accepted: bool,
     permit: Option<ContentFramePermit>,
     content: Option<RenderedContent>,
     targets: Vec<ContentTargetLayout>,
@@ -75,7 +76,6 @@ impl<R: ContentRenderer> ShellService<R> {
             state: ResourceState::Staging,
             release_deadline: None,
         };
-        let upload_transaction = self.transaction()?;
         self.presentations.push(PendingPresentation {
             panel,
             slot_index,
@@ -83,8 +83,9 @@ impl<R: ContentRenderer> ShellService<R> {
             old,
             candidate,
             demand_id: 0,
-            upload_transaction,
-            next_chunk: 0,
+            source: None,
+            offer: None,
+            accepted: false,
             permit: None,
             raster: RasterSummary {
                 width: pixels.width(),
@@ -151,8 +152,9 @@ impl<R: ContentRenderer> ShellService<R> {
             old: None,
             candidate: 0,
             demand_id: 0,
-            upload_transaction: TransactionId::from_raw(0),
-            next_chunk: 0,
+            source: None,
+            offer: None,
+            accepted: false,
             permit: None,
             content: None,
             raster_reused: true,
@@ -178,21 +180,17 @@ impl<R: ContentRenderer> ShellService<R> {
             return Err(format!("content {:?} response timed out", pending.phase));
         }
         let old_phase = pending.phase;
-        let old_chunk = pending.next_chunk;
         let progressed = match pending.phase {
             PresentationPhase::ResourceUnqueued => self.advance_resource_start(&mut pending)?,
             PresentationPhase::ResourceAccepted => self.advance_demand_enqueue(&mut pending)?,
             PresentationPhase::PermitGranted => self.advance_candidate_enqueue(&mut pending)?,
             PresentationPhase::RetireNeeded => self.advance_retire_enqueue(&mut pending)?,
-            PresentationPhase::ResourceBegun => self.advance_resource_begin(&mut pending)?,
-            PresentationPhase::ResourceUploading => self.advance_resource_chunks(&mut pending)?,
-            PresentationPhase::ResourceUploaded => self.advance_resource_upload(&mut pending)?,
+            PresentationPhase::ImageOffered => self.advance_image_offered(&mut pending)?,
             PresentationPhase::DemandSent => self.advance_demand(&mut pending)?,
             PresentationPhase::CandidateSubmitted => self.advance_candidate(&mut pending)?,
             PresentationPhase::Presented => false,
         };
-        self.progressed |=
-            progressed || pending.phase != old_phase || pending.next_chunk != old_chunk;
+        self.progressed |= progressed || pending.phase != old_phase;
         if pending.phase == PresentationPhase::Presented {
             self.finish_presentation(pending)?;
             return Ok(true);
@@ -205,6 +203,19 @@ impl<R: ContentRenderer> ShellService<R> {
         &mut self,
         pending: &mut PendingPresentation,
     ) -> Result<bool, String> {
+        // No image moves before the sealed channel is Ready; a
+        // closed channel is an explicit session failure, never a
+        // byte-upload fallback.
+        let Some(adapter) = self.connection.image_adapter() else {
+            return Err("sealed image channel was not enabled".into());
+        };
+        match adapter.channel() {
+            Some(sophia_shell_client::ImageChannelState::Ready) => {}
+            Some(sophia_shell_client::ImageChannelState::Closed) => {
+                return Err("sealed image channel closed before Source".into());
+            }
+            _ => return Ok(false),
+        }
         let pixels = &pending
             .content
             .as_ref()
@@ -218,123 +229,115 @@ impl<R: ContentRenderer> ShellService<R> {
             },
             generation: pending.resource.generation,
         };
-        let allocation = &self.panels[pending.panel].allocation;
-        let begin = ShellContentRecord::ResourceBegin(ContentResourceBegin {
-            grant: self.limits.grant,
-            resource,
-            width_px: pixels.width(),
-            height_px: pixels.height(),
-            rendered_scale_numerator: allocation.scale_numerator,
-            rendered_scale_denominator: allocation.scale_denominator,
-            pixel_format: 1,
-            chunk_count: pixels.chunks(self.limits.max_chunk_bytes)?.count() as u32,
-            total_bytes: pixels.bytes().len() as u64,
-        });
-        match self.enqueue_content(pending.upload_transaction, &begin) {
-            Ok(()) => {}
-            Err(sophia_shell_client::ShellClientError::QueueSaturated) => return Ok(false),
-            Err(error) => return Err(format!("resource begin failed: {error}")),
+        if pending.source.is_none() {
+            let isb = sophia_image_producer::create_isb(pixels.width(), pixels.height())
+                .map_err(|error| format!("sealed source create: {error:?}"))?;
+            isb.write_pixels(0, pixels.bytes())
+                .map_err(|error| format!("sealed source fill: {error:?}"))?;
+            sophia_image_producer::finish_isb(&isb)
+                .map_err(|error| format!("sealed source seal: {error:?}"))?;
+            pending.source = Some(isb.into_fd());
         }
-        if pending.resource.id == 0 {
-            self.next_resource = self
-                .next_resource
-                .checked_add(1)
-                .ok_or("resource identity exhausted")?;
-        }
-        pending.resource = resource;
-        self.panels[pending.panel].resources[pending.slot_index].id = resource.id;
-        pending.phase = PresentationPhase::ResourceBegun;
-        pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
-        Ok(true)
-    }
-
-    fn advance_resource_begin(
-        &mut self,
-        pending: &mut PendingPresentation,
-    ) -> Result<bool, String> {
-        let Some(ShellContentRecord::ResourceStatus(status)) =
-            self.take_pending(|record| matches!(record, ShellContentRecord::ResourceStatus(value) if value.resource == pending.resource))
-        else {
-            return Ok(false);
+        let source = pending.source.take().unwrap();
+        let panel = &self.panels[pending.panel];
+        let metadata = sophia_shell_client::ProducerMetadata {
+            offer_id: 0,
+            resource: resource.id,
+            resource_generation: resource.generation,
+            admission_epoch: self.limits.grant.content_grant_epoch,
+            output_id: panel.output.output.id,
+            allocation_id: panel.allocation.allocation.id,
+            topology_generation: self.facts.facts_generation,
+            source_kind: 1,
+            source_format: 1,
+            width: pixels.width(),
+            height: pixels.height(),
+            stride: pixels.width() * 4,
+            plane_count: 1,
+            descriptor_count: 1,
+            declared_bytes: pixels.bytes().len() as u64,
+            modifier: 0,
         };
-        if status.status != 1 || status.reason != ContentReason::None as u16 {
-            return Err(format!("resource begin was rejected: {}", status.reason));
-        }
-        pending.phase = PresentationPhase::ResourceUploading;
-        self.advance_resource_chunks(pending)
-    }
-
-    fn advance_resource_chunks(
-        &mut self,
-        pending: &mut PendingPresentation,
-    ) -> Result<bool, String> {
-        let pixels = &pending
-            .content
-            .as_ref()
-            .ok_or("upload lost its raster")?
-            .pixels;
-        let chunk_count = pixels.chunks(self.limits.max_chunk_bytes)?.count() as u32;
-        // At most four whole-row chunks (under 256 KiB) per output turn.
-        for chunk in pixels
-            .chunks(self.limits.max_chunk_bytes)?
-            .skip(pending.next_chunk as usize)
-            .take(self.upload_chunks_left)
+        match self
+            .connection
+            .image_begin(metadata, source, Instant::now())
         {
-            match self.enqueue_content(
-                pending.upload_transaction,
-                &ShellContentRecord::ResourceChunk(ContentResourceChunk {
-                    grant: self.limits.grant,
-                    resource: pending.resource,
-                    ordinal: chunk.ordinal,
-                    offset: chunk.offset,
-                    bytes: chunk.bytes.to_vec(),
-                }),
-            ) {
-                Ok(()) => {
-                    pending.next_chunk += 1;
-                    self.upload_chunks_left -= 1;
+            Ok(admission) => {
+                self.custody.record_ticket(admission.ticket);
+                if pending.resource.id == 0 {
+                    self.next_resource = self
+                        .next_resource
+                        .checked_add(1)
+                        .ok_or("resource identity exhausted")?;
                 }
-                Err(sophia_shell_client::ShellClientError::QueueSaturated) => return Ok(false),
-                Err(error) => return Err(format!("resource chunk failed: {error}")),
+                pending.resource = resource;
+                self.panels[pending.panel].resources[pending.slot_index].id = resource.id;
+                pending.offer = Some(admission.offer);
+                pending.phase = PresentationPhase::ImageOffered;
+                pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
+                Ok(true)
+            }
+            Err(error) => {
+                use sophia_shell_client::ImageAdapterError;
+                if matches!(
+                    error.error,
+                    ImageAdapterError::Busy | ImageAdapterError::Again
+                ) {
+                    // The descriptor came back; retry next turn.
+                    pending.source = error.source;
+                    return Ok(false);
+                }
+                Err(format!("sealed image begin refused: {:?}", error.error))
             }
         }
-        if pending.next_chunk != chunk_count {
-            return Ok(false);
-        }
-        match self.enqueue_content(
-            pending.upload_transaction,
-            &ShellContentRecord::ResourceEnd(ContentResourceEnd {
-                grant: self.limits.grant,
-                resource: pending.resource,
-                total_bytes: pixels.bytes().len() as u64,
-                chunk_count,
-            }),
-        ) {
-            Ok(()) => {}
-            Err(sophia_shell_client::ShellClientError::QueueSaturated) => return Ok(false),
-            Err(error) => return Err(format!("resource end failed: {error}")),
-        }
-        pending.phase = PresentationPhase::ResourceUploaded;
-        pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
-        Ok(true)
     }
 
-    fn advance_resource_upload(
-        &mut self,
-        pending: &mut PendingPresentation,
-    ) -> Result<bool, String> {
-        let Some(ShellContentRecord::ResourceStatus(status)) =
-            self.take_pending(|record| matches!(record, ShellContentRecord::ResourceStatus(value) if value.resource == pending.resource))
-        else {
-            return Ok(false);
-        };
-        if status.status != RESOURCE_ACCEPTED || status.reason != ContentReason::None as u16 {
-            return Err(format!("resource was rejected: {}", status.reason));
+    fn advance_image_offered(&mut self, pending: &mut PendingPresentation) -> Result<bool, String> {
+        if !pending.accepted {
+            let Some(ShellContentRecord::ResourceStatus(status)) =
+                self.take_pending(|record| matches!(record, ShellContentRecord::ResourceStatus(value) if value.resource == pending.resource))
+            else {
+                return Ok(false);
+            };
+            if status.status != RESOURCE_ACCEPTED || status.reason != ContentReason::None as u16 {
+                return Err(format!("image resource was rejected: {}", status.reason));
+            }
+            pending.accepted = true;
+            pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
+            return Ok(true);
         }
-        self.panels[pending.panel].resources[pending.slot_index].state = ResourceState::Resident;
-        pending.content = None;
-        pending.phase = PresentationPhase::ResourceAccepted;
-        self.advance_demand_enqueue(pending)
+        let offer = pending.offer.ok_or("image offer was not recorded")?;
+        let info = self
+            .connection
+            .image_adapter()
+            .and_then(|adapter| adapter.offer(offer))
+            .ok_or("image offer vanished before settlement")?;
+        use sophia_shell_client::OfferState;
+        match info.state {
+            OfferState::Settled => {
+                if info.status != Some(sophia_image_producer::ResourceStatusKind::Accepted)
+                    || info.disposition != 1
+                {
+                    return Err("image settled without Accepted and Settled disposition 1".into());
+                }
+                self.connection
+                    .image_forget(offer)
+                    .map_err(|error| format!("image forget: {error:?}"))?;
+                self.panels[pending.panel].resources[pending.slot_index].state =
+                    ResourceState::Resident;
+                pending.content = None;
+                pending.phase = PresentationPhase::ResourceAccepted;
+                self.advance_demand_enqueue(pending)
+            }
+            OfferState::Refused
+            | OfferState::Ambiguous
+            | OfferState::Expired
+            | OfferState::Unknown => Err(format!(
+                "image offer ended in {:?} before settlement",
+                info.state
+            )),
+            _ => Ok(false),
+        }
     }
 
     fn advance_demand_enqueue(

@@ -1,12 +1,14 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use sophia_shell_client::{Admission, Custody, ShellClientOptions, ShellConnection};
+use sophia_shell_client::{
+    Admission, Custody, ProducerMetadata, ProducerRoleBounds, ShellClientOptions, ShellConnection,
+    ShellImageConfig,
+};
 use sophia_shell_protocol::{
     ContentAllocationId, ContentAllocationRequest, ContentCandidateBegin, ContentCandidateChunk,
     ContentCandidateEnd, ContentFrameDemand, ContentMargins, ContentPixelRect, ContentPlacement,
-    ContentReason, ContentResourceBegin, ContentResourceChunk, ContentResourceEnd,
-    ContentResourceId, ContentResourceRetire, ContentSurface, ContentTarget,
+    ContentReason, ContentResourceId, ContentResourceRetire, ContentSurface, ContentTarget,
     SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE, SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER,
     ShellContentRecord, TransactionId,
 };
@@ -14,13 +16,18 @@ use sophia_shell_protocol::{
 use crate::protocol::ContentPixels;
 
 pub(super) fn run(socket: PathBuf) -> Result<(), String> {
-    let capabilities =
-        SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE;
+    let capabilities = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
+        | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
+        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
+    let endpoint_dir = socket
+        .parent()
+        .map(|parent| parent.to_path_buf())
+        .ok_or("shell socket path has no parent directory")?;
     let (mut connection, _generation_channel) = super::authentication::connect(
         socket,
         ShellClientOptions {
-            minimum_revision: 6,
-            maximum_revision: 6,
+            minimum_revision: 9,
+            maximum_revision: 9,
             required_capabilities: capabilities,
             handshake_timeout: Duration::from_secs(5),
         },
@@ -30,6 +37,31 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     let ShellContentRecord::Limits(limits) = receive(&mut connection)? else {
         return Err("first content record was not ContentLimits".into());
     };
+    // ISB is mandatory in this proof too: enable the sealed channel
+    // from the negotiated limits; no byte upload follows.
+    {
+        let origin = Instant::now();
+        let origin_ms = monotonic_ms()?;
+        connection
+            .enable_image(
+                ShellImageConfig {
+                    endpoint_dir,
+                    bounds: ProducerRoleBounds {
+                        max_resource_bytes: limits.max_resource_bytes,
+                        max_width: limits.max_width_px,
+                        max_height: limits.max_height_px,
+                        max_admitted_outputs: limits.max_outputs,
+                        transfer_slots: limits.max_open_transfers,
+                    },
+                    transfer_timeout_ms: limits.transfer_timeout_ms,
+                    startup_deadline_ms: origin_ms + u64::from(limits.transfer_timeout_ms),
+                    formats_capacity: 4096,
+                },
+                origin,
+                origin_ms,
+            )
+            .map_err(|error| format!("sealed image channel is required: {error}"))?;
+    }
     let ShellContentRecord::OutputFacts(facts) = receive(&mut connection)? else {
         return Err("ContentLimits was not followed by output facts".into());
     };
@@ -82,59 +114,61 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
         )
         .map_err(|e| format!("content allocation: {e:?}"))?;
     let pixels = ContentPixels::from_rgba8(2, 1, vec![255, 0, 0, 255, 0, 255, 0, 128])?;
-    let chunks = pixels.chunks(limits.max_chunk_bytes)?.collect::<Vec<_>>();
-    let chunk_count = chunks.len() as u32;
     let resource = ContentResourceId {
         id: 1,
         generation: 1,
     };
-    let upload = TransactionId::from_raw(1);
-    send(
-        &mut connection,
-        upload,
-        ShellContentRecord::ResourceBegin(ContentResourceBegin {
-            grant: limits.grant,
-            resource,
-            width_px: pixels.width(),
-            height_px: pixels.height(),
-            rendered_scale_numerator: allocation.scale_numerator,
-            rendered_scale_denominator: allocation.scale_denominator,
-            pixel_format: 1,
-            chunk_count,
-            total_bytes: pixels.bytes().len() as u64,
-        }),
-    )?;
-    let admitted = receive(&mut connection)?;
-    if !matches!(&admitted, ShellContentRecord::ResourceStatus(status) if status.resource == resource && status.status == 1)
+    // Wait for ChannelReady; a closed channel fails the proof.
     {
-        return Err("resource was not admitted".into());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            connection
+                .poll_io()
+                .map_err(|error| format!("image channel drive: {error}"))?;
+            match connection
+                .image_adapter()
+                .ok_or("sealed image channel was not enabled")?
+                .channel()
+            {
+                Some(sophia_shell_client::ImageChannelState::Ready) => break,
+                Some(sophia_shell_client::ImageChannelState::Closed) => {
+                    return Err("sealed image channel closed before Source".into());
+                }
+                _ if Instant::now() >= deadline => {
+                    return Err("sealed image channel was not ready in time".into());
+                }
+                _ => std::thread::sleep(Duration::from_millis(1)),
+            }
+        }
     }
-    lifecycle
-        .dispatch(upload, admitted)
-        .map_err(|e| format!("resource admission: {e:?}"))?;
-    for chunk in chunks {
-        send(
-            &mut connection,
-            upload,
-            ShellContentRecord::ResourceChunk(ContentResourceChunk {
-                grant: limits.grant,
-                resource,
-                ordinal: chunk.ordinal,
-                offset: chunk.offset,
-                bytes: chunk.bytes.to_vec(),
-            }),
-        )?;
-    }
-    send(
-        &mut connection,
-        upload,
-        ShellContentRecord::ResourceEnd(ContentResourceEnd {
-            grant: limits.grant,
-            resource,
-            total_bytes: pixels.bytes().len() as u64,
-            chunk_count,
-        }),
-    )?;
+    let isb = sophia_image_producer::create_isb(pixels.width(), pixels.height())
+        .map_err(|error| format!("sealed source create: {error:?}"))?;
+    isb.write_pixels(0, pixels.bytes())
+        .map_err(|error| format!("sealed source fill: {error:?}"))?;
+    sophia_image_producer::finish_isb(&isb)
+        .map_err(|error| format!("sealed source seal: {error:?}"))?;
+    let metadata = ProducerMetadata {
+        offer_id: 0,
+        resource: resource.id,
+        resource_generation: resource.generation,
+        admission_epoch: limits.grant.content_grant_epoch,
+        output_id: output.output.id,
+        allocation_id: allocation.allocation.id,
+        topology_generation: facts.facts_generation,
+        source_kind: 1,
+        source_format: 1,
+        width: pixels.width(),
+        height: pixels.height(),
+        stride: pixels.width() * 4,
+        plane_count: 1,
+        descriptor_count: 1,
+        declared_bytes: pixels.bytes().len() as u64,
+        modifier: 0,
+    };
+    let admission = connection
+        .image_begin(metadata, isb.into_fd(), Instant::now())
+        .map_err(|error| format!("sealed image begin refused: {:?}", error.error))?;
+    let upload = TransactionId::from_raw(admission.offer);
     let accepted = receive(&mut connection)?;
     if !matches!(&accepted, ShellContentRecord::ResourceStatus(status) if status.resource == resource && status.status == 2)
     {
@@ -143,6 +177,32 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     lifecycle
         .dispatch(upload, accepted)
         .map_err(|e| format!("resource acceptance: {e:?}"))?;
+    // Only SourceReleased with disposition 1 settles the offer.
+    {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            connection
+                .poll_io()
+                .map_err(|error| format!("image settle drive: {error}"))?;
+            let info = connection
+                .image_adapter()
+                .and_then(|adapter| adapter.offer(admission.offer))
+                .ok_or("image offer vanished before settlement")?;
+            if info.state == sophia_shell_client::OfferState::Settled {
+                if info.disposition != 1 {
+                    return Err("image settled without disposition 1".into());
+                }
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("image offer did not settle in time".into());
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    connection
+        .image_forget(admission.offer)
+        .map_err(|error| format!("image forget: {error:?}"))?;
     send(
         &mut connection,
         TransactionId::from_raw(9),
@@ -260,6 +320,24 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
         ContentReason::RendererFailed as u16,
     );
     Ok(())
+}
+
+/// Absolute CLOCK_MONOTONIC milliseconds, paired with an `Instant`
+/// taken at the same moment for the image adapter's clock domain.
+fn monotonic_ms() -> Result<u64, String> {
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `ts` is a valid out-pointer for the duration of the call.
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) } != 0 {
+        return Err("CLOCK_MONOTONIC unavailable".into());
+    }
+    let ms = (ts.tv_sec as u64)
+        .checked_mul(1_000)
+        .and_then(|ms| ms.checked_add((ts.tv_nsec / 1_000_000) as u64))
+        .ok_or("CLOCK_MONOTONIC overflow")?;
+    Ok(ms)
 }
 
 fn send(
