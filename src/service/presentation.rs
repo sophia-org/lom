@@ -19,9 +19,6 @@ pub(super) struct PendingPresentation {
     old: Option<ContentResourceId>,
     candidate: u64,
     demand_id: u64,
-    /// The sealed source, retained only while `image_begin` refuses
-    /// it with Busy; the producer owns it after admission.
-    source: Option<std::os::fd::OwnedFd>,
     offer: Option<u64>,
     accepted: bool,
     permit: Option<ContentFramePermit>,
@@ -83,7 +80,6 @@ impl<R: ContentRenderer> ShellService<R> {
             old,
             candidate,
             demand_id: 0,
-            source: None,
             offer: None,
             accepted: false,
             permit: None,
@@ -152,7 +148,6 @@ impl<R: ContentRenderer> ShellService<R> {
             old: None,
             candidate: 0,
             demand_id: 0,
-            source: None,
             offer: None,
             accepted: false,
             permit: None,
@@ -203,16 +198,16 @@ impl<R: ContentRenderer> ShellService<R> {
         &mut self,
         pending: &mut PendingPresentation,
     ) -> Result<bool, String> {
-        // No image moves before the sealed channel is Ready; a
+        // No image moves before the owned-ring channel is Ready; a
         // closed channel is an explicit session failure, never a
-        // byte-upload fallback.
+        // sealed or byte-upload fallback.
         let Some(adapter) = self.connection.image_adapter() else {
-            return Err("sealed image channel was not enabled".into());
+            return Err("owned-ring image channel was not enabled".into());
         };
         match adapter.channel() {
             Some(sophia_shell_client::ImageChannelState::Ready) => {}
             Some(sophia_shell_client::ImageChannelState::Closed) => {
-                return Err("sealed image channel closed before Source".into());
+                return Err("owned-ring image channel closed before Ready".into());
             }
             _ => return Ok(false),
         }
@@ -229,41 +224,23 @@ impl<R: ContentRenderer> ShellService<R> {
             },
             generation: pending.resource.generation,
         };
-        if pending.source.is_none() {
-            let isb = sophia_image_producer::create_isb(pixels.width(), pixels.height())
-                .map_err(|error| format!("sealed source create: {error:?}"))?;
-            isb.write_pixels(0, pixels.bytes())
-                .map_err(|error| format!("sealed source fill: {error:?}"))?;
-            sophia_image_producer::finish_isb(&isb)
-                .map_err(|error| format!("sealed source seal: {error:?}"))?;
-            pending.source = Some(isb.into_fd());
-        }
-        let source = pending.source.take().unwrap();
         let panel = &self.panels[pending.panel];
-        let metadata = sophia_shell_client::ProducerMetadata {
-            offer_id: 0,
+        let upload = sophia_shell_client::RingUpload {
             resource: resource.id,
             resource_generation: resource.generation,
-            admission_epoch: self.limits.grant.content_grant_epoch,
-            output_id: panel.output.output.id,
-            allocation_id: panel.allocation.allocation.id,
+            allocation: panel.allocation.allocation.id,
+            allocation_generation: panel.allocation.allocation.generation,
+            output: panel.output.output.id,
+            output_generation: panel.output.output.generation,
             topology_generation: self.facts.facts_generation,
-            source_kind: 1,
-            source_format: 1,
             width: pixels.width(),
             height: pixels.height(),
-            stride: pixels.width() * 4,
-            plane_count: 1,
-            descriptor_count: 1,
-            declared_bytes: pixels.bytes().len() as u64,
-            modifier: 0,
         };
         match self
             .connection
-            .image_begin(metadata, source, Instant::now())
+            .image_upload_ring(upload, pixels.bytes(), Instant::now())
         {
-            Ok(admission) => {
-                self.custody.record_ticket(admission.ticket);
+            Ok(offer) => {
                 if pending.resource.id == 0 {
                     self.next_resource = self
                         .next_resource
@@ -272,22 +249,19 @@ impl<R: ContentRenderer> ShellService<R> {
                 }
                 pending.resource = resource;
                 self.panels[pending.panel].resources[pending.slot_index].id = resource.id;
-                pending.offer = Some(admission.offer);
+                pending.offer = Some(offer);
                 pending.phase = PresentationPhase::ImageOffered;
                 pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
                 Ok(true)
             }
             Err(error) => {
                 use sophia_shell_client::ImageAdapterError;
-                if matches!(
-                    error.error,
-                    ImageAdapterError::Busy | ImageAdapterError::Again
-                ) {
-                    // The descriptor came back; retry next turn.
-                    pending.source = error.source;
+                if matches!(error, ImageAdapterError::Busy | ImageAdapterError::Again) {
+                    // A ring slot or control write is busy; the
+                    // pixels wait in the pending presentation.
                     return Ok(false);
                 }
-                Err(format!("sealed image begin refused: {:?}", error.error))
+                Err(format!("owned-ring image upload refused: {error:?}"))
             }
         }
     }
@@ -309,16 +283,13 @@ impl<R: ContentRenderer> ShellService<R> {
         let offer = pending.offer.ok_or("image offer was not recorded")?;
         let info = self
             .connection
-            .image_adapter()
-            .and_then(|adapter| adapter.offer(offer))
+            .image_ring_offer(offer)
             .ok_or("image offer vanished before settlement")?;
-        use sophia_shell_client::OfferState;
+        use sophia_shell_client::RingOfferState;
         match info.state {
-            OfferState::Settled => {
-                if info.status != Some(sophia_image_producer::ResourceStatusKind::Accepted)
-                    || info.disposition != 1
-                {
-                    return Err("image settled without Accepted and Settled disposition 1".into());
+            RingOfferState::Settled => {
+                if info.status != Some(sophia_image_producer::ResourceStatusKind::Accepted) {
+                    return Err("image settled without an Accepted status".into());
                 }
                 self.connection
                     .image_forget(offer)
@@ -329,14 +300,11 @@ impl<R: ContentRenderer> ShellService<R> {
                 pending.phase = PresentationPhase::ResourceAccepted;
                 self.advance_demand_enqueue(pending)
             }
-            OfferState::Refused
-            | OfferState::Ambiguous
-            | OfferState::Expired
-            | OfferState::Unknown => Err(format!(
+            RingOfferState::Refused | RingOfferState::Unknown => Err(format!(
                 "image offer ended in {:?} before settlement",
                 info.state
             )),
-            _ => Ok(false),
+            RingOfferState::Pending => Ok(false),
         }
     }
 

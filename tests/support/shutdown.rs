@@ -252,7 +252,7 @@ fn capabilities() -> u64 {
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
         | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION
-        | sophia_shell_client::IMAGE_CAPABILITY_SEALED
+        | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING
 }
 
 #[test]

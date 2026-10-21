@@ -18,7 +18,7 @@ fn serve_reports_the_file_transport_before_requiring_a_gpu_grant() {
                 | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
                 | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
                 | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION
-                | sophia_shell_client::IMAGE_CAPABILITY_SEALED,
+                | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING,
         );
         wait.recv_timeout(Duration::from_secs(10)).unwrap();
     });
@@ -38,7 +38,7 @@ fn serve_reports_the_file_transport_before_requiring_a_gpu_grant() {
     assert_eq!(output.status.code(), Some(2));
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "lom_shell_transport schema=1 wire=9p2000.L revision=9 epoch=41\n"
+        "lom_shell_transport schema=1 wire=9p2000.L revision=10 epoch=41\n"
     );
     assert!(
         String::from_utf8(output.stderr)
@@ -62,7 +62,7 @@ fn diagnostic_uploads_on_9p_and_reports_only_renderer_failure() {
             listener.accept().unwrap().0,
             SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
                 | SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
-                | sophia_shell_client::IMAGE_CAPABILITY_SEALED,
+                | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING,
         );
         send(
             &mut peer,
@@ -119,7 +119,7 @@ fn diagnostic_uploads_on_9p_and_reports_only_renderer_failure() {
                 acknowledged_anchor: ContentPixelRect::default(),
             }),
         );
-        // One sealed ISB offer, verified by the peer before it sent
+        // One ring offer, verified by the peer before it sent
         // Accepted + SourceReleased (Settled disposition 1).
         let image = receive_image(&mut peer);
         assert_eq!((image.width, image.height, image.declared_bytes), (2, 1, 8));

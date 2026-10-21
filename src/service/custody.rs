@@ -33,13 +33,6 @@ impl CustodyWatch {
         }
     }
 
-    /// Record one image-begin ticket, which the SDK returns outside
-    /// an `Admission` bundle.
-    pub(super) fn record_ticket(&mut self, ticket: Ticket) {
-        self.last = ticket.0;
-        self.pending.push_back(ticket);
-    }
-
     pub(super) fn observe(&mut self, connection: &ShellConnection) -> Result<(), String> {
         for _ in 0..self.pending.len() {
             let ticket = self.pending.pop_front().expect("bounded ticket count");

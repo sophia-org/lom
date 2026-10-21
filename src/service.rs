@@ -224,8 +224,8 @@ impl<R: ContentRenderer> ShellService<R> {
             .validate()
             .map_err(|error| format!("invalid content limits: {error:?}"))?;
         // Image admission is mandatory on this client: enable the
-        // sealed channel from the negotiated limits, or fail startup.
-        // There is no byte-upload fallback.
+        // owned-ring channel from the negotiated limits, or fail
+        // startup. There is no sealed or byte-upload fallback.
         {
             let origin = Instant::now();
             let origin_ms = monotonic_ms()?;
@@ -241,10 +241,13 @@ impl<R: ContentRenderer> ShellService<R> {
                 transfer_timeout_ms: limits.transfer_timeout_ms,
                 startup_deadline_ms: origin_ms + u64::from(limits.transfer_timeout_ms),
                 formats_capacity: 4096,
+                ring_slots: 0,
+                ring_capacity: 0,
+                content_grant_epoch: limits.grant.content_grant_epoch,
             };
             connection
                 .enable_image(image, origin, origin_ms)
-                .map_err(|error| format!("sealed image channel is required: {error}"))?;
+                .map_err(|error| format!("owned-ring image channel is required: {error}"))?;
         }
         let (facts_transaction, ShellContentRecord::OutputFacts(facts)) =
             receive_content(&mut connection, &stop)?

@@ -2,8 +2,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use sophia_shell_client::{
-    Admission, Custody, ProducerMetadata, ProducerRoleBounds, ShellClientOptions, ShellConnection,
-    ShellImageConfig,
+    Admission, Custody, ProducerRoleBounds, ShellClientOptions, ShellConnection, ShellImageConfig,
 };
 use sophia_shell_protocol::{
     ContentAllocationId, ContentAllocationRequest, ContentCandidateBegin, ContentCandidateChunk,
@@ -18,7 +17,7 @@ use crate::protocol::ContentPixels;
 pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     let capabilities = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
-        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
+        | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING;
     let endpoint_dir = socket
         .parent()
         .map(|parent| parent.to_path_buf())
@@ -26,8 +25,8 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     let (mut connection, _generation_channel) = super::authentication::connect(
         socket,
         ShellClientOptions {
-            minimum_revision: 9,
-            maximum_revision: 9,
+            minimum_revision: 10,
+            maximum_revision: 10,
             required_capabilities: capabilities,
             handshake_timeout: Duration::from_secs(5),
         },
@@ -37,8 +36,8 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     let ShellContentRecord::Limits(limits) = receive(&mut connection)? else {
         return Err("first content record was not ContentLimits".into());
     };
-    // ISB is mandatory in this proof too: enable the sealed channel
-    // from the negotiated limits; no byte upload follows.
+    // The owned ring is mandatory in this proof too: enable its
+    // channel from the negotiated limits; no sealed upload follows.
     {
         let origin = Instant::now();
         let origin_ms = monotonic_ms()?;
@@ -56,6 +55,9 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
                     transfer_timeout_ms: limits.transfer_timeout_ms,
                     startup_deadline_ms: origin_ms + u64::from(limits.transfer_timeout_ms),
                     formats_capacity: 4096,
+                    ring_slots: 0,
+                    ring_capacity: 0,
+                    content_grant_epoch: limits.grant.content_grant_epoch,
                 },
                 origin,
                 origin_ms,
@@ -127,48 +129,38 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
                 .map_err(|error| format!("image channel drive: {error}"))?;
             match connection
                 .image_adapter()
-                .ok_or("sealed image channel was not enabled")?
+                .ok_or("owned-ring image channel was not enabled")?
                 .channel()
             {
                 Some(sophia_shell_client::ImageChannelState::Ready) => break,
                 Some(sophia_shell_client::ImageChannelState::Closed) => {
-                    return Err("sealed image channel closed before Source".into());
+                    return Err("owned-ring image channel closed before Ready".into());
                 }
                 _ if Instant::now() >= deadline => {
-                    return Err("sealed image channel was not ready in time".into());
+                    return Err("owned-ring image channel was not ready in time".into());
                 }
                 _ => std::thread::sleep(Duration::from_millis(1)),
             }
         }
     }
-    let isb = sophia_image_producer::create_isb(pixels.width(), pixels.height())
-        .map_err(|error| format!("sealed source create: {error:?}"))?;
-    isb.write_pixels(0, pixels.bytes())
-        .map_err(|error| format!("sealed source fill: {error:?}"))?;
-    sophia_image_producer::finish_isb(&isb)
-        .map_err(|error| format!("sealed source seal: {error:?}"))?;
-    let metadata = ProducerMetadata {
-        offer_id: 0,
-        resource: resource.id,
-        resource_generation: resource.generation,
-        admission_epoch: limits.grant.content_grant_epoch,
-        output_id: output.output.id,
-        allocation_id: allocation.allocation.id,
-        topology_generation: facts.facts_generation,
-        source_kind: 1,
-        source_format: 1,
-        width: pixels.width(),
-        height: pixels.height(),
-        stride: pixels.width() * 4,
-        plane_count: 1,
-        descriptor_count: 1,
-        declared_bytes: pixels.bytes().len() as u64,
-        modifier: 0,
-    };
-    let admission = connection
-        .image_begin(metadata, isb.into_fd(), Instant::now())
-        .map_err(|error| format!("sealed image begin refused: {:?}", error.error))?;
-    let upload = TransactionId::from_raw(admission.offer);
+    let offer = connection
+        .image_upload_ring(
+            sophia_shell_client::RingUpload {
+                resource: resource.id,
+                resource_generation: resource.generation,
+                allocation: allocation.allocation.id,
+                allocation_generation: allocation.allocation.generation,
+                output: allocation.output.id,
+                output_generation: allocation.output.generation,
+                topology_generation: facts.facts_generation,
+                width: pixels.width(),
+                height: pixels.height(),
+            },
+            pixels.bytes(),
+            Instant::now(),
+        )
+        .map_err(|error| format!("owned-ring image upload refused: {error:?}"))?;
+    let upload = TransactionId::from_raw(offer);
     let accepted = receive(&mut connection)?;
     if !matches!(&accepted, ShellContentRecord::ResourceStatus(status) if status.resource == resource && status.status == 2)
     {
@@ -177,7 +169,8 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
     lifecycle
         .dispatch(upload, accepted)
         .map_err(|e| format!("resource acceptance: {e:?}"))?;
-    // Only SourceReleased with disposition 1 settles the offer.
+    // Only status 2 followed by the exact successful SlotReleased
+    // settles the offer.
     {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -185,13 +178,9 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
                 .poll_io()
                 .map_err(|error| format!("image settle drive: {error}"))?;
             let info = connection
-                .image_adapter()
-                .and_then(|adapter| adapter.offer(admission.offer))
+                .image_ring_offer(offer)
                 .ok_or("image offer vanished before settlement")?;
-            if info.state == sophia_shell_client::OfferState::Settled {
-                if info.disposition != 1 {
-                    return Err("image settled without disposition 1".into());
-                }
+            if info.state == sophia_shell_client::RingOfferState::Settled {
                 break;
             }
             if Instant::now() >= deadline {
@@ -201,7 +190,7 @@ pub(super) fn run(socket: PathBuf) -> Result<(), String> {
         }
     }
     connection
-        .image_forget(admission.offer)
+        .image_forget(offer)
         .map_err(|error| format!("image forget: {error:?}"))?;
     send(
         &mut connection,

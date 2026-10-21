@@ -26,12 +26,14 @@ masonry = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849de
 tokio = { version = "1.50", features = ["rt", "sync"] }
 wgpu = { version = "28.0", default-features = false, features = ["vulkan", "wgsl", "std", "parking_lot"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-sophia-shell-protocol = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "fbde253ef297e282357080600a560f1824cd6b50" }
-sophia-shell-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "fbde253ef297e282357080600a560f1824cd6b50" }
-sophia-launch-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "fbde253ef297e282357080600a560f1824cd6b50" }
-sophia-9p-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "fbde253ef297e282357080600a560f1824cd6b50" }
-sophia-image-producer = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "fbde253ef297e282357080600a560f1824cd6b50" }
+sophia-shell-protocol = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "ce926b531b0185faf3d88f7b82a8d8803ea520f7" }
+sophia-shell-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "ce926b531b0185faf3d88f7b82a8d8803ea520f7" }
+sophia-launch-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "ce926b531b0185faf3d88f7b82a8d8803ea520f7" }
+sophia-9p-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "ce926b531b0185faf3d88f7b82a8d8803ea520f7" }
+sophia-image-producer = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "ce926b531b0185faf3d88f7b82a8d8803ea520f7" }
 
 [dev-dependencies]
 imaging_vello_cpu = "0.0.1"
 masonry_testing = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849def6eeab282561439b963862e5", default-features = false }
+
+

@@ -66,17 +66,17 @@ fn serve<R: ContentRenderer>(
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
         | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION
-        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
-    // ISB requires r9 and the sealed capability; there is no byte
-    // fallback. The image endpoint directory is the parent of the
+        | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING;
+    // The owned ring requires r10 and its capability; there is no
+    // sealed or byte fallback. The image endpoint directory is the parent of the
     // exact role socket path.
     let endpoint_dir = Path::new(&socket)
         .parent()
         .map(|parent| parent.to_path_buf())
         .ok_or("shell socket path has no parent directory")?;
     let options = ShellClientOptions {
-        minimum_revision: 9,
-        maximum_revision: 9,
+        minimum_revision: 10,
+        maximum_revision: 10,
         required_capabilities: capabilities,
         handshake_timeout: Duration::from_secs(5),
     };

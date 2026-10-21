@@ -54,7 +54,7 @@ fn a_refused_file_submission_is_reported_without_waiting_for_an_owner_outcome() 
     let (done, wait) = std::sync::mpsc::channel();
     let capabilities = SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
-        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
+        | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING;
     let server = std::thread::spawn(move || {
         let peer = Peer::with_refusal(
             listener.accept().unwrap().0,
@@ -81,8 +81,8 @@ fn a_refused_file_submission_is_reported_without_waiting_for_an_owner_outcome() 
     let connection = ShellConnection::connect_files(
         &path,
         ShellClientOptions {
-            minimum_revision: 9,
-            maximum_revision: 9,
+            minimum_revision: 10,
+            maximum_revision: 10,
             required_capabilities: capabilities,
             handshake_timeout: Duration::from_secs(2),
         },
@@ -247,12 +247,12 @@ fn persistent_service_negotiates_allocates_uploads_and_waits_for_native_presenta
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
         | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION
-        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
+        | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING;
     let connection = ShellConnection::connect_files(
         &path,
         ShellClientOptions {
-            minimum_revision: 9,
-            maximum_revision: 9,
+            minimum_revision: 10,
+            maximum_revision: 10,
             required_capabilities: capabilities,
             handshake_timeout: Duration::from_secs(2),
         },
@@ -310,12 +310,12 @@ fn candidate_generations_are_unique_across_outputs() {
     let capabilities = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
-        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
+        | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING;
     let connection = ShellConnection::connect_files(
         &path,
         ShellClientOptions {
-            minimum_revision: 9,
-            maximum_revision: 9,
+            minimum_revision: 10,
+            maximum_revision: 10,
             required_capabilities: capabilities,
             handshake_timeout: Duration::from_secs(2),
         },
@@ -355,7 +355,7 @@ fn serve_two_outputs(
     let expected = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
-        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
+        | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING;
     let mut stream = Peer::new(stream, expected);
     initialize_two_outputs(&mut stream);
     service_multiplex::exchange(&mut stream);
@@ -445,7 +445,7 @@ fn serve_one(
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
         | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION
-        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
+        | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING;
     let mut stream = Peer::new(stream, expected);
     stream.indicators(
         TransactionId::from_raw(3),

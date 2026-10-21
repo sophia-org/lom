@@ -95,7 +95,7 @@ fn interaction_refresh_reuses_pixels_and_stays_clickable_with_old_release_held()
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
         | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION
-        | sophia_shell_client::IMAGE_CAPABILITY_SEALED;
+        | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING;
     let server = std::thread::spawn(move || {
         let mut stream = Peer::new(listener.accept().unwrap().0, caps);
         // The file feed is fetched independently. Publish the initial view
@@ -109,8 +109,8 @@ fn interaction_refresh_reuses_pixels_and_stays_clickable_with_old_release_held()
     let connection = ShellConnection::connect_files(
         &path,
         ShellClientOptions {
-            minimum_revision: 9,
-            maximum_revision: 9,
+            minimum_revision: 10,
+            maximum_revision: 10,
             required_capabilities: caps,
             handshake_timeout: Duration::from_secs(2),
         },
