@@ -10,14 +10,7 @@ use std::{
     time::Instant,
 };
 
-#[expect(
-    dead_code,
-    reason = "shared service fixture also covers activation and resource uploads"
-)]
-#[path = "files_peer.rs"]
-mod files_peer;
-#[path = "files_wire.rs"]
-mod files_wire;
+use crate::service::tests::{files_peer, files_wire};
 const GRANT: ContentGrant = ContentGrant {
     connection_epoch: files_wire::EPOCH,
     content_grant_epoch: 9,

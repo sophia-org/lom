@@ -229,9 +229,7 @@ impl<R: ContentRenderer> ShellService<R> {
         limits
             .validate()
             .map_err(|error| format!("invalid content limits: {error:?}"))?;
-        // Image admission is mandatory on this client: enable the
-        // owned-ring channel from the negotiated limits, or fail
-        // startup. There is no sealed or byte-upload fallback.
+        // Match source custody to the renderer selected for this connection.
         {
             let origin = Instant::now();
             let origin_ms = monotonic_ms()?;
@@ -251,9 +249,12 @@ impl<R: ContentRenderer> ShellService<R> {
                 ring_capacity: 0,
                 content_grant_epoch: limits.grant.content_grant_epoch,
             };
-            connection
-                .enable_image(image, origin, origin_ms)
-                .map_err(|error| format!("owned-ring image channel is required: {error}"))?;
+            if renderer.uses_dma_buf() {
+                connection.enable_dma_image(image, origin, origin_ms)
+            } else {
+                connection.enable_image(image, origin, origin_ms)
+            }
+            .map_err(|error| format!("image channel is required: {error}"))?;
         }
         let (facts_transaction, ShellContentRecord::OutputFacts(facts)) =
             receive_content(&mut connection, &stop)?
@@ -725,3 +726,7 @@ fn margins(values: [i32; 4]) -> Result<ContentMargins, String> {
         left: i16::try_from(values[3]).map_err(|_| "left margin exceeds protocol range")?,
     })
 }
+
+#[cfg(test)]
+#[path = "../tests/support/service_dma_handshake.rs"]
+pub(crate) mod tests;

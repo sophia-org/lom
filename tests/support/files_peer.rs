@@ -40,10 +40,27 @@ impl Peer {
         capabilities: u64,
         refuse: Option<ShellFileKind>,
     ) -> Self {
+        Self::spawn(stream, capabilities, refuse, false)
+    }
+
+    /// A capture-granted Session: discovery, limits, one format row and
+    /// ChannelReady all name owned-ring plus DMA-BUF (source kinds 6).
+    /// Only the in-crate handshake test uses it.
+    #[allow(dead_code)]
+    pub fn with_dma(stream: UnixStream, capabilities: u64) -> Self {
+        Self::spawn(stream, capabilities, None, true)
+    }
+
+    fn spawn(
+        stream: UnixStream,
+        capabilities: u64,
+        refuse: Option<ShellFileKind>,
+        dma: bool,
+    ) -> Self {
         let (command, commands) = mpsc::channel();
         let (messages, received) = mpsc::channel();
         let worker =
-            std::thread::spawn(move || run(stream, capabilities, refuse, commands, messages));
+            std::thread::spawn(move || run(stream, capabilities, refuse, dma, commands, messages));
         Self {
             command,
             messages: received,
@@ -102,6 +119,7 @@ fn run(
     stream: UnixStream,
     capabilities: u64,
     refuse: Option<ShellFileKind>,
+    dma: bool,
     commands: mpsc::Receiver<Command>,
     messages: mpsc::Sender<Message>,
 ) {
@@ -120,9 +138,14 @@ fn run(
     );
     let endpoint_path = std::env::temp_dir().join(&endpoint_name);
     let image_listener = seqpacket_listener(&endpoint_path);
-    wire.object("image-channel", 41, discovery_text(&endpoint_name));
-    wire.object("image-limits", 42, image_limits_record());
-    wire.object("image-formats", 43, image_formats_record());
+    let source_kinds = if dma { 6 } else { 4 };
+    wire.object(
+        "image-channel",
+        41,
+        discovery_text(&endpoint_name, source_kinds),
+    );
+    wire.object("image-limits", 42, image_limits_record(dma));
+    wire.object("image-formats", 43, image_formats_record(dma));
     let mut image_socket: Option<std::os::fd::OwnedFd> = None;
     let mut hello_seen = false;
     let mut ring: Option<(RingIdentity, u64, std::os::fd::OwnedFd)> = None;
@@ -257,7 +280,7 @@ fn run(
                         hello_seen = true;
                         let body = ShellChannelReady {
                             channel_generation: 3,
-                            granted_source_kinds: 4,
+                            granted_source_kinds: source_kinds,
                         }
                         .encode()
                         .unwrap();
@@ -483,12 +506,12 @@ fn recv_packet(fd: std::os::fd::RawFd) -> Option<(Vec<u8>, Vec<std::os::fd::Owne
     Some((buf[..n as usize].to_vec(), fds))
 }
 
-fn discovery_text(endpoint: &str) -> Vec<u8> {
+fn discovery_text(endpoint: &str, source_kinds: u32) -> Vec<u8> {
     ShellImageDiscovery {
         connection_epoch: EPOCH,
         channel_generation: 3,
         endpoint: endpoint.to_owned(),
-        source_kinds: 4,
+        source_kinds,
         max_offers: 4,
         max_packets_per_turn: 1,
         hello_timeout_ms: 250,
@@ -503,18 +526,20 @@ fn discovery_text(endpoint: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-fn image_limits_record() -> Vec<u8> {
+fn image_limits_record(dma: bool) -> Vec<u8> {
+    // The DMA reservation group is all zero or all positive.
+    let dma_reservation = |value| if dma { value } else { 0 };
     let body = ShellImageLimits {
         channel_generation: 3,
         limits_generation: 9,
         max_resource_bytes: 4_194_304,
         max_sealed_backing_bytes: 16_777_216,
-        max_dma_source_bytes: 0,
-        max_renderer_allocation_bytes: 0,
-        max_renderer_entries: 0,
+        max_dma_source_bytes: dma_reservation(4_194_304),
+        max_renderer_allocation_bytes: dma_reservation(16_777_216),
+        max_renderer_entries: dma_reservation(4) as u32,
         max_offers: 4,
         max_validation_jobs: 4,
-        max_capture_jobs: 0,
+        max_capture_jobs: dma_reservation(4) as u32,
         max_admitted_outputs: 16,
         max_format_rows_per_output: 1,
         max_width: 8192,
@@ -530,12 +555,26 @@ fn image_limits_record() -> Vec<u8> {
         .unwrap()
 }
 
-fn image_formats_record() -> Vec<u8> {
+fn image_formats_record(dma: bool) -> Vec<u8> {
+    // One LINEAR XRGB row on the render node, as Session publishes for capture.
+    let rows = dma
+        .then_some(ShellImageFormatRow {
+            output: super::OUTPUT.id,
+            device_major: 226,
+            device_minor: 128,
+            fourcc: u32::from_le_bytes(*b"XR24"),
+            flags: SHELL_IMAGE_FORMAT_FLAG_OPAQUE,
+            modifier: 0,
+            max_width: 8192,
+            max_height: 4096,
+        })
+        .into_iter()
+        .collect();
     let body = ShellImageFormats {
         channel_generation: 3,
         formats_generation: 11,
         limits_generation: 9,
-        rows: Vec::new(),
+        rows,
     }
     .encode()
     .unwrap();
