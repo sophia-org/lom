@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::ContentPixels;
 
 impl<R: ContentRenderer> ShellService<R> {
     pub(super) fn service_turn(&mut self) -> Result<usize, String> {

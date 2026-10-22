@@ -5,9 +5,12 @@ use masonry_imaging::TextureRenderer;
 
 mod admission;
 mod completion;
+mod dma;
+mod dma_layout;
 mod drm;
 mod readback;
 pub use admission::GpuGrant;
+pub use dma::DmaFrame;
 use readback::PendingReadback;
 
 /// Auditable identity of the GPU worker admitted for one shell connection.
@@ -119,9 +122,23 @@ pub struct GpuPreview {
     device: wgpu::Device,
     queue: wgpu::Queue,
     pending: Option<PendingReadback>,
+    stalled: Option<dma::Stalled>,
+    frames: dma_layout::Frames,
+    blitter: Option<wgpu::util::TextureBlitter>,
     adapter_drm: Option<drm::DrmRenderIdentity>,
     _render_node: Option<std::fs::File>,
 }
+impl Drop for GpuPreview {
+    /// A stalled export may still be used by a release submission wgpu does
+    /// not track, and wgpu would destroy its image at once and panic on queue
+    /// teardown. Keep it, with the device and queue it needs, until exit.
+    fn drop(&mut self) {
+        if let Some(stalled) = self.stalled.take() {
+            std::mem::forget((stalled, self.device.clone(), self.queue.clone()));
+        }
+    }
+}
+
 impl GpuPreview {
     /// Initialize Vulkan without a surface. Software adapters are explicitly refused.
     ///
@@ -171,11 +188,13 @@ impl GpuPreview {
         render_node: Option<std::fs::File>,
     ) -> Result<Self, String> {
         let info = adapter.get_info();
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("Shell explicit offscreen preview"),
-            ..Default::default()
-        }))
-        .map_err(|error| format!("GPU device request: {error}"))?;
+        let (device, queue) = dma::open_device(
+            &adapter,
+            &wgpu::DeviceDescriptor {
+                label: Some("Shell explicit offscreen preview"),
+                ..Default::default()
+            },
+        )?;
         let renderer = masonry_imaging::vello::new_target_renderer(device.clone(), queue.clone())
             .map_err(|error| error.to_string())?;
         Ok(Self {
@@ -184,6 +203,9 @@ impl GpuPreview {
             device,
             queue,
             pending: None,
+            stalled: None,
+            frames: dma_layout::Frames::default(),
+            blitter: None,
             adapter_drm,
             _render_node: render_node,
         })
@@ -210,20 +232,7 @@ impl GpuPreview {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, String> {
-        if self.pending.is_some() {
-            return Err(
-                "GPU readback previously failed; renderer retains that job and refuses new work"
-                    .into(),
-            );
-        }
-        if width == 0
-            || height == 0
-            || width > 8192
-            || height > 4096
-            || u64::from(width) * u64::from(height) > 8 * 1024 * 1024
-        {
-            return Err("preview exceeds the 8M pixel output bound".into());
-        }
+        self.admit(width, height)?;
         let texture = self
             .renderer
             .render_source_texture(scene, width, height)
@@ -242,5 +251,30 @@ impl GpuPreview {
             .finish(&self.device)?;
         self.pending = None;
         Ok(bytes)
+    }
+
+    /// Shared by readback and export: a retained job of either kind blocks all new work.
+    fn admit(&self, width: u32, height: u32) -> Result<(), String> {
+        if self.pending.is_some() {
+            return Err(
+                "GPU readback previously failed; renderer retains that job and refuses new work"
+                    .into(),
+            );
+        }
+        if self.stalled.is_some() {
+            return Err(
+                "GPU DMA-BUF export previously failed; renderer retains that job and refuses new work"
+                    .into(),
+            );
+        }
+        if width == 0
+            || height == 0
+            || width > 8192
+            || height > 4096
+            || u64::from(width) * u64::from(height) > 8 * 1024 * 1024
+        {
+            return Err("preview exceeds the 8M pixel output bound".into());
+        }
+        Ok(())
     }
 }

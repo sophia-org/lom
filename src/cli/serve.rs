@@ -14,20 +14,25 @@ use sophia_shell_protocol::{
 };
 use std::{path::Path, time::Duration};
 
-pub(super) fn run() -> Result<(), String> {
-    run_with_renderer(|epoch| {
+pub(super) fn run(dma: bool) -> Result<(), String> {
+    run_with_renderer(dma, |epoch| {
         let grant = GpuGrant::from_environment(epoch)?;
-        let (renderer, admission) = RendererWorker::start(grant)?;
+        let (renderer, admission) = if dma {
+            RendererWorker::start_dma(grant)?
+        } else {
+            RendererWorker::start(grant)?
+        };
         println!("{}", admission.record("lom")?);
         Ok(renderer)
     })
 }
 
 fn run_with_renderer<R: ContentRenderer>(
+    dma: bool,
     renderer: impl FnOnce(u64) -> Result<R, String>,
 ) -> Result<(), String> {
     let stop = super::shutdown::Shutdown::install()?;
-    let result = serve(&stop, renderer);
+    let result = serve(&stop, dma, renderer);
     if stop.requested() {
         // Dropping the connection revokes this owner's content and leaves any
         // ambiguous submission with its original owner; nothing is replayed.
@@ -40,6 +45,7 @@ fn run_with_renderer<R: ContentRenderer>(
 
 fn serve<R: ContentRenderer>(
     stop: &super::shutdown::Shutdown,
+    dma: bool,
     renderer: impl FnOnce(u64) -> Result<R, String>,
 ) -> Result<(), String> {
     if std::env::var_os("SOPHIA_SHELL_SOCKET").is_some() {
@@ -66,7 +72,12 @@ fn serve<R: ContentRenderer>(
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
         | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION
-        | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING;
+        | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING
+        | if dma {
+            sophia_shell_client::IMAGE_CAPABILITY_DMA_BUF
+        } else {
+            0
+        };
     // The owned ring requires r10 and its capability; there is no
     // sealed or byte fallback. The image endpoint directory is the parent of the
     // exact role socket path.

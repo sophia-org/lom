@@ -2,7 +2,7 @@
 
 use super::{GpuAdmissionEvidence, GpuGrant, GpuPreview};
 use crate::model::Model;
-use crate::service::{ContentRenderer, RenderIdentity, RenderedContent};
+use crate::service::{ContentRenderer, RenderIdentity, RenderImage, RenderedContent};
 use crate::ui::PreviewDriver;
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::time::{Duration, Instant};
@@ -63,6 +63,7 @@ impl RetainedHosts {
 
 /// Capacity-one renderer executor. The worker alone owns Vello and wgpu.
 pub struct RendererWorker {
+    dma: bool,
     requests: SyncSender<RenderJob>,
     completions: Receiver<Result<RenderedContent, String>>,
     submitted_at: Option<Instant>,
@@ -72,6 +73,15 @@ pub struct RendererWorker {
 impl RendererWorker {
     /// Validate the admitted adapter and initialize the worker before serving.
     pub fn start(grant: GpuGrant) -> Result<(Self, GpuAdmissionEvidence), String> {
+        Self::start_source(grant, false)
+    }
+
+    /// Explicit DMA capture worker; no readback fallback on refusal.
+    pub fn start_dma(grant: GpuGrant) -> Result<(Self, GpuAdmissionEvidence), String> {
+        Self::start_source(grant, true)
+    }
+
+    fn start_source(grant: GpuGrant, dma: bool) -> Result<(Self, GpuAdmissionEvidence), String> {
         let (requests, incoming) = mpsc::sync_channel::<RenderJob>(1);
         let (completed, completions) = mpsc::sync_channel(1);
         let (ready, readiness) = mpsc::sync_channel(1);
@@ -94,9 +104,12 @@ impl RendererWorker {
                 let mut hosts = RetainedHosts::default();
                 while let Ok(job) = incoming.recv() {
                     let result = hosts.scene(job).and_then(|(mut scene, targets)| {
-                        renderer
-                            .readback_content(&mut scene)
-                            .map(|pixels| RenderedContent { pixels, targets })
+                        let pixels = if dma {
+                            renderer.dma_content(&mut scene).map(RenderImage::Dma)
+                        } else {
+                            renderer.readback_content(&mut scene).map(RenderImage::Cpu)
+                        }?;
+                        Ok(RenderedContent { pixels, targets })
                     });
                     if completed.send(result).is_err() {
                         break;
@@ -109,6 +122,7 @@ impl RendererWorker {
             .map_err(|error| format!("GPU worker startup: {error}"))??;
         Ok((
             Self {
+                dma,
                 requests,
                 completions,
                 submitted_at: None,
@@ -120,6 +134,10 @@ impl RendererWorker {
 }
 
 impl ContentRenderer for RendererWorker {
+    fn uses_dma_buf(&self) -> bool {
+        self.dma
+    }
+
     fn submit(
         &mut self,
         identity: RenderIdentity,

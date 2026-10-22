@@ -149,7 +149,7 @@ impl ContentRenderer for ImmediateRenderer {
 
     fn poll(&mut self) -> Result<Option<RenderedContent>, String> {
         Ok(self.0.take().map(|pixels| RenderedContent {
-            pixels,
+            pixels: pixels.into(),
             targets: Vec::new(),
         }))
     }
@@ -204,7 +204,7 @@ impl ContentRenderer for FixedRenderer {
         Ok(self.completed.take().map(|pixels| {
             let message = self.target_message.take().expect("render target message");
             RenderedContent {
-                pixels,
+                pixels: pixels.into(),
                 targets: vec![ContentTargetLayout {
                     target_generation: 0,
                     message,

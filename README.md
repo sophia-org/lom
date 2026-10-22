@@ -71,6 +71,13 @@ the panel followed by its theme:
 lom --serve
 ```
 
+The default image source is the owned ring. An experimental supervisor profile
+can explicitly select `lom --serve --image-source dma-buf` for opaque,
+producer-completed GPU buffers. This requires Sophia's r10 DMA capture grant
+and currently one output/device; an unavailable grant fails startup. It does
+not silently fall back. Native export and EGL import controls have passed;
+full Session presentation and performance qualification are still pending.
+
 `--serve` is a supervisor entry point, not a command to run from an ordinary
 terminal. It requires `SOPHIA_SHELL_9P_SOCKET`, `SOPHIA_SHELL_CONFIG` and
 `SOPHIA_SHELL_BAR_THICKNESS`, negotiates revision 6, allocates one panel per

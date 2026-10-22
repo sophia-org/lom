@@ -46,11 +46,28 @@ fn default_startup_requires_an_explicit_command() {
 
 #[test]
 fn protected_service_requires_supervisor_supplied_inputs_before_gpu_setup() {
-    let result = run(&["--serve"]);
+    for arguments in [
+        &["--serve"][..],
+        &["--serve", "--image-source", "owned-ring"],
+        &["--serve", "--image-source", "dma-buf"],
+    ] {
+        let result = run(arguments);
+        assert_eq!(result.status.code(), Some(2));
+        assert!(result.stdout.is_empty());
+        let text = String::from_utf8(result.stderr).expect("diagnostic is UTF-8");
+        assert!(text.contains("SOPHIA_SHELL_9P_SOCKET is required"));
+    }
+}
+
+#[test]
+fn invalid_image_source_fails_before_service_startup() {
+    let result = run(&["--serve", "--image-source", "automatic"]);
     assert_eq!(result.status.code(), Some(2));
-    assert!(result.stdout.is_empty());
-    let text = String::from_utf8(result.stderr).expect("diagnostic is UTF-8");
-    assert!(text.contains("SOPHIA_SHELL_9P_SOCKET is required"));
+    assert!(
+        String::from_utf8(result.stderr)
+            .unwrap()
+            .contains("--image-source must be owned-ring or dma-buf")
+    );
 }
 
 #[test]

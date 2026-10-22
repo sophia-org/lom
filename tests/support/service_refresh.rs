@@ -24,11 +24,12 @@ impl ContentRenderer for CountedRenderer {
             .find(|entry| entry.output == model.output)
             .unwrap();
         self.ready = Some(RenderedContent {
-            pixels: ContentPixels::from_rgba8(
+            pixels: (ContentPixels::from_rgba8(
                 width,
                 height,
                 vec![if entry.active { 255 } else { 128 }; (width * height * 4) as usize],
-            )?,
+            )?)
+            .into(),
             targets: vec![ContentTargetLayout {
                 target_generation: 0,
                 message: Msg::ActivateWorkspace {

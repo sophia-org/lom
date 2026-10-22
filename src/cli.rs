@@ -17,7 +17,7 @@ use std::{
 };
 
 /// Help displayed without loading configuration, fonts or a GPU.
-pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n       lom content-proof --socket FILE\n       lom --serve\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\ncontent-proof exercises fixed diagnostic pixels over an explicitly admitted Sophia 9P socket; it does not present a panel.\n--serve is the persistent protected Sophia content-shell entry point.\n";
+pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n       lom content-proof --socket FILE\n       lom --serve [--image-source owned-ring|dma-buf]\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\ncontent-proof exercises fixed diagnostic pixels over an explicitly admitted Sophia 9P socket; it does not present a panel.\n--serve is the persistent protected Sophia content-shell entry point.\n";
 
 /// Run one diagnostic command; the caller prints any returned boundary failure.
 pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
@@ -35,7 +35,7 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
     let allowed = match command {
         "check-config" => &["--config", "--theme"][..],
         "content-proof" => &["--socket"][..],
-        "--serve" => &[][..],
+        "--serve" => &["--image-source"][..],
         "preview" => &[
             "--config",
             "--theme",
@@ -51,7 +51,13 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
         return content_proof::run(required(&options, "--socket")?);
     }
     if command == "--serve" {
-        return serve::run();
+        let dma = match options.get("--image-source") {
+            None => false,
+            Some(value) if value == "owned-ring" => false,
+            Some(value) if value == "dma-buf" => true,
+            _ => return Err("--image-source must be owned-ring or dma-buf".into()),
+        };
+        return serve::run(dma);
     }
     let (config, theme) = load(
         &required(&options, "--config")?,

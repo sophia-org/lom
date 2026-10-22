@@ -13,6 +13,7 @@ fn mailbox_allows_only_one_job_and_reports_one_completion() {
     let (requests, incoming) = mpsc::sync_channel(1);
     let (completed, completions) = mpsc::sync_channel(1);
     let mut worker = RendererWorker {
+        dma: false,
         requests,
         completions,
         submitted_at: None,
@@ -24,7 +25,8 @@ fn mailbox_allows_only_one_job_and_reports_one_completion() {
     assert_eq!((job.width, job.height, job.scale), (8, 48, 2.0));
     completed
         .send(Ok(RenderedContent {
-            pixels: crate::protocol::ContentPixels::from_rgba8(8, 48, vec![0; 1536]).unwrap(),
+            pixels: (crate::protocol::ContentPixels::from_rgba8(8, 48, vec![0; 1536]).unwrap())
+                .into(),
             targets: Vec::new(),
         }))
         .unwrap();
@@ -37,6 +39,7 @@ fn expired_worker_job_is_quarantined_instead_of_reused() {
     let (requests, _incoming) = mpsc::sync_channel(1);
     let (_completed, completions) = mpsc::sync_channel(1);
     let mut worker = RendererWorker {
+        dma: false,
         requests,
         completions,
         submitted_at: Some(Instant::now()),

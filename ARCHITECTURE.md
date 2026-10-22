@@ -266,6 +266,18 @@ location to Lom.
 
 ## 6. GPU rendering and resource lifetimes
 
+The default shell transport remains the owned ring. The explicit
+`--serve --image-source dma-buf` option requests Sophia's experimental r10
+capture path and fails if that capability is unavailable. `shell-gpu` exports
+producer-completed LINEAR (modifier 0) XRGB8888 DMA-BUFs after a fenced release
+to `VK_QUEUE_FAMILY_FOREIGN_EXT`. Lom retains each frame until the SDK observes
+Accepted and SourceReleased(CaptureComplete); it performs no CPU readback in
+this mode. The first phase supports opaque content and one output/device.
+Candidate diagnostics use schema 2 and `checksum=unavailable` for DMA frames;
+the CPU path preserves schema 1 and its pixel checksum. Render-node export and
+Vulkan-to-EGL pixel controls have passed; full Session presentation and matched
+performance qualification remain open.
+
 Use Vello GPU through `wgpu`, with Parley/Fontique for text. Fonts and assets
 must be explicitly available within the admitted environment. Toolkit defaults
 do not grant host filesystem, service, GPU-device, or display access.

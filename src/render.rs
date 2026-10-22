@@ -33,6 +33,16 @@ impl GpuPreview {
             .read_rgba(&mut scene.scene, scene.width, scene.height)?;
         ContentPixels::from_rgba8(scene.width, scene.height, bytes)
     }
+    /// Render a completed opaque DMA source without CPU readback.
+    pub fn dma_content(
+        &mut self,
+        scene: &mut PreviewScene,
+    ) -> Result<sophia_shell_gpu::DmaFrame, String> {
+        ContentPixels::byte_len(scene.width, scene.height)?;
+        self.0
+            .render_dma_buf(&mut scene.scene, scene.width, scene.height)
+    }
+
     /// Write an explicit diagnostic image without claiming native presentation.
     pub fn write_png(&mut self, scene: &mut PreviewScene, path: &Path) -> Result<(), String> {
         let bytes = self

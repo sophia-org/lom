@@ -1,15 +1,16 @@
 //! Persistent, display-independent Sophia content lifecycle.
 
 mod custody;
+mod image;
 mod presentation;
 mod scheduler;
 mod target_generations;
+pub use image::RenderImage;
 use presentation::PendingPresentation;
 
 use crate::{
     config::{ModuleKind, PanelConfig, Position, Theme},
     model::{Model, Workspace, WorkspaceSnapshot},
-    protocol::ContentPixels,
     ui::ContentTargetLayout,
 };
 use chrono::{DateTime, FixedOffset, Utc};
@@ -71,10 +72,10 @@ const PERMIT_GRANTED: u16 = 1;
 const CANDIDATE_PRESENTED: u16 = 2;
 
 /// Pixels and action targets resolved by one immutable layout pass.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct RenderedContent {
-    /// Complete panel pixels.
-    pub pixels: ContentPixels,
+    /// Complete panel image, retained until source custody settles.
+    pub pixels: RenderImage,
     /// Workspace hit regions from the same Masonry layout.
     pub targets: Vec<ContentTargetLayout>,
 }
@@ -94,6 +95,11 @@ pub struct RenderIdentity {
 
 /// Produces one complete panel resource from passive application state.
 pub trait ContentRenderer {
+    /// Whether this renderer supplies producer-completed DMA sources.
+    fn uses_dma_buf(&self) -> bool {
+        false
+    }
+
     /// Queue exactly one render for the acknowledged physical allocation.
     fn submit(
         &mut self,
@@ -134,7 +140,7 @@ struct RasterSummary {
     width: u32,
     height: u32,
     bytes: usize,
-    checksum: u64,
+    checksum: Option<u64>,
 }
 
 #[derive(Clone, Copy)]

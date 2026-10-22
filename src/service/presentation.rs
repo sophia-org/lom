@@ -69,7 +69,7 @@ impl<R: ContentRenderer> ShellService<R> {
         self.panels[panel].resources[slot_index] = ResourceSlot {
             id: slot.id,
             generation: slot.generation,
-            bytes: pixels.bytes().len() as u64,
+            bytes: pixels.byte_len() as u64,
             state: ResourceState::Staging,
             release_deadline: None,
         };
@@ -86,8 +86,8 @@ impl<R: ContentRenderer> ShellService<R> {
             raster: RasterSummary {
                 width: pixels.width(),
                 height: pixels.height(),
-                bytes: pixels.bytes().len(),
-                checksum: pixel_checksum(pixels.bytes()),
+                bytes: pixels.byte_len(),
+                checksum: pixels.checksum(),
             },
             targets_prepared: false,
             targets: content.targets.clone(),
@@ -198,16 +198,14 @@ impl<R: ContentRenderer> ShellService<R> {
         &mut self,
         pending: &mut PendingPresentation,
     ) -> Result<bool, String> {
-        // No image moves before the owned-ring channel is Ready; a
-        // closed channel is an explicit session failure, never a
-        // sealed or byte-upload fallback.
+        // Neither transport may send a source before ChannelReady.
         let Some(adapter) = self.connection.image_adapter() else {
-            return Err("owned-ring image channel was not enabled".into());
+            return Err("image channel was not enabled".into());
         };
         match adapter.channel() {
             Some(sophia_shell_client::ImageChannelState::Ready) => {}
             Some(sophia_shell_client::ImageChannelState::Closed) => {
-                return Err("owned-ring image channel closed before Ready".into());
+                return Err("image channel closed before Ready".into());
             }
             _ => return Ok(false),
         }
@@ -236,10 +234,43 @@ impl<R: ContentRenderer> ShellService<R> {
             width: pixels.width(),
             height: pixels.height(),
         };
-        match self
-            .connection
-            .image_upload_ring(upload, pixels.bytes(), Instant::now())
-        {
+        let offered = match pixels {
+            RenderImage::Cpu(pixels) => {
+                self.connection
+                    .image_upload_ring(upload, pixels.bytes(), Instant::now())
+            }
+            RenderImage::Dma(frame) => {
+                let metadata = sophia_shell_client::ProducerMetadata {
+                    offer_id: 0,
+                    resource: resource.id,
+                    resource_generation: resource.generation,
+                    admission_epoch: self.limits.grant.content_grant_epoch,
+                    output_id: panel.output.output.id,
+                    allocation_id: panel.allocation.allocation.id,
+                    topology_generation: self.facts.facts_generation,
+                    source_kind: 2,
+                    source_format: u32::from_le_bytes(*b"XR24"),
+                    width: frame.width(),
+                    height: frame.height(),
+                    stride: 0,
+                    plane_count: 1,
+                    descriptor_count: 1,
+                    declared_bytes: pixels.byte_len() as u64,
+                    modifier: 0,
+                };
+                self.connection
+                    .image_begin_dma_buf(
+                        metadata,
+                        frame.dup_fd()?,
+                        frame.offset(),
+                        frame.stride(),
+                        Instant::now(),
+                    )
+                    .map(|admission| admission.offer)
+                    .map_err(|error| error.error)
+            }
+        };
+        match offered {
             Ok(offer) => {
                 if pending.resource.id == 0 {
                     self.next_resource = self
@@ -281,6 +312,28 @@ impl<R: ContentRenderer> ShellService<R> {
             return Ok(true);
         }
         let offer = pending.offer.ok_or("image offer was not recorded")?;
+        if self.renderer.uses_dma_buf() {
+            use sophia_image_producer::OfferState;
+            let info = self
+                .connection
+                .image_adapter()
+                .and_then(|a| a.dma_offer(offer))
+                .ok_or("DMA offer vanished before settlement")?;
+            match info.state {
+                OfferState::Settled
+                    if info.disposition == 2
+                        && info.status
+                            == Some(sophia_image_producer::ResourceStatusKind::Accepted) => {}
+                OfferState::Settled | OfferState::Refused | OfferState::Unknown => {
+                    return Err(format!(
+                        "DMA source ended without capture completion: {:?}",
+                        info.state
+                    ));
+                }
+                _ => return Ok(false),
+            }
+            return self.finish_image_offer(pending, offer);
+        }
         let info = self
             .connection
             .image_ring_offer(offer)
@@ -291,14 +344,7 @@ impl<R: ContentRenderer> ShellService<R> {
                 if info.status != Some(sophia_image_producer::ResourceStatusKind::Accepted) {
                     return Err("image settled without an Accepted status".into());
                 }
-                self.connection
-                    .image_forget(offer)
-                    .map_err(|error| format!("image forget: {error:?}"))?;
-                self.panels[pending.panel].resources[pending.slot_index].state =
-                    ResourceState::Resident;
-                pending.content = None;
-                pending.phase = PresentationPhase::ResourceAccepted;
-                self.advance_demand_enqueue(pending)
+                self.finish_image_offer(pending, offer)
             }
             RingOfferState::Refused | RingOfferState::Unknown => Err(format!(
                 "image offer ended in {:?} before settlement",
@@ -306,6 +352,21 @@ impl<R: ContentRenderer> ShellService<R> {
             )),
             RingOfferState::Pending => Ok(false),
         }
+    }
+
+    fn finish_image_offer(
+        &mut self,
+        pending: &mut PendingPresentation,
+        offer: u64,
+    ) -> Result<bool, String> {
+        self.connection
+            .image_forget(offer)
+            .map_err(|error| format!("image forget: {error:?}"))?;
+        self.panels[pending.panel].resources[pending.slot_index].state = ResourceState::Resident;
+        // Dropping a DMA frame is permitted only after CaptureComplete above.
+        pending.content = None;
+        pending.phase = PresentationPhase::ResourceAccepted;
+        self.advance_demand_enqueue(pending)
     }
 
     fn advance_demand_enqueue(
@@ -472,7 +533,8 @@ impl<R: ContentRenderer> ShellService<R> {
         let raster = pending.raster;
         let indicator_generation = pending.indicator_revision;
         println!(
-            "lom_panel_candidate schema=1 status=presented connection_epoch={} content_grant_epoch={} output={} candidate_generation={} presentation_epoch={} indicator_generation={} width={} height={} bytes={} checksum={:016x} raster_source={}",
+            "lom_panel_candidate schema={} status=presented connection_epoch={} content_grant_epoch={} output={} candidate_generation={} presentation_epoch={} indicator_generation={} width={} height={} bytes={} checksum={} raster_source={}",
+            if raster.checksum.is_some() { 1 } else { 2 },
             self.limits.grant.connection_epoch,
             self.limits.grant.content_grant_epoch,
             panel.output.output.id,
@@ -482,7 +544,9 @@ impl<R: ContentRenderer> ShellService<R> {
             raster.width,
             raster.height,
             raster.bytes,
-            raster.checksum,
+            raster
+                .checksum
+                .map_or_else(|| "unavailable".to_owned(), |value| format!("{value:016x}")),
             if pending.raster_reused {
                 "reused"
             } else {
