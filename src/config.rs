@@ -131,6 +131,8 @@ pub struct ModuleConfig {
 /// One desired panel. Sizes are logical, not acknowledged native allocations.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PanelConfig {
+    /// Explicit GPU image transport opt-in; false keeps the owned ring.
+    pub dma_buf: bool,
     /// Configured identity.
     pub name: String,
     /// Desired edge.

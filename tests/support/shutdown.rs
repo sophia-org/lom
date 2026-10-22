@@ -56,7 +56,7 @@ impl ContentRenderer for Renderer {
 fn shutdown_child() {
     let root = PathBuf::from(std::env::var_os("LOM_SHUTDOWN_TEST").expect("parent fixture"));
     assert_eq!(std::process::id(), 1);
-    run_with_renderer(false, |_| {
+    run_with_renderer(None, |_, _| {
         fs::write(root.join("renderer"), "yes").unwrap();
         Ok(Renderer(root.clone()))
     })

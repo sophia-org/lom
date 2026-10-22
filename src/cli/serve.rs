@@ -14,8 +14,8 @@ use sophia_shell_protocol::{
 };
 use std::{path::Path, time::Duration};
 
-pub(super) fn run(dma: bool) -> Result<(), String> {
-    run_with_renderer(dma, |epoch| {
+pub(super) fn run(dma: Option<bool>) -> Result<(), String> {
+    run_with_renderer(dma, |epoch, dma| {
         let grant = GpuGrant::from_environment(epoch)?;
         let (renderer, admission) = if dma {
             RendererWorker::start_dma(grant)?
@@ -28,8 +28,8 @@ pub(super) fn run(dma: bool) -> Result<(), String> {
 }
 
 fn run_with_renderer<R: ContentRenderer>(
-    dma: bool,
-    renderer: impl FnOnce(u64) -> Result<R, String>,
+    dma: Option<bool>,
+    renderer: impl FnOnce(u64, bool) -> Result<R, String>,
 ) -> Result<(), String> {
     let stop = super::shutdown::Shutdown::install()?;
     let result = serve(&stop, dma, renderer);
@@ -45,8 +45,8 @@ fn run_with_renderer<R: ContentRenderer>(
 
 fn serve<R: ContentRenderer>(
     stop: &super::shutdown::Shutdown,
-    dma: bool,
-    renderer: impl FnOnce(u64) -> Result<R, String>,
+    dma: Option<bool>,
+    renderer: impl FnOnce(u64, bool) -> Result<R, String>,
 ) -> Result<(), String> {
     if std::env::var_os("SOPHIA_SHELL_SOCKET").is_some() {
         return Err("SOPHIA_SHELL_SOCKET is unsupported; use SOPHIA_SHELL_9P_SOCKET".into());
@@ -60,6 +60,7 @@ fn serve<R: ContentRenderer>(
     let (config, theme) = parse_shell_config(&source)
         .map_err(|error| format!("{}:{error}", Path::new(&config_path).display()))?;
     validate_theme(&config, &theme)?;
+    let dma = dma.unwrap_or(config.dma_buf);
     let allowance = std::env::var("SOPHIA_SHELL_BAR_THICKNESS")
         .map_err(|_| "SOPHIA_SHELL_BAR_THICKNESS is required for --serve")?
         .parse::<u32>()
@@ -101,7 +102,7 @@ fn serve<R: ContentRenderer>(
         connection.welcome().selected_revision,
         connection.connection_epoch()
     );
-    let renderer = renderer(connection.connection_epoch())?;
+    let renderer = renderer(connection.connection_epoch(), dma)?;
     stop.check()?;
     let mut service = ShellService::new_until_stopped(
         connection,

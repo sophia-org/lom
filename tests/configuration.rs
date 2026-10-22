@@ -171,3 +171,32 @@ fn production_shell_document_keeps_panel_and_theme_in_one_mount() {
     assert!(lom::config::parse_config(source).is_err());
     assert!(lom::config::parse_shell_config(support::CONFIG).is_err());
 }
+
+#[test]
+fn protected_image_source_is_explicit_and_defaults_to_the_owned_ring() {
+    let source = include_str!("../examples/minimal/shell.kdl");
+    assert!(!lom::config::parse_shell_config(source).unwrap().0.dma_buf);
+    for (value, expected) in [("owned-ring", false), ("dma-buf", true)] {
+        let configured = source.replace(
+            "panel \"main\" {",
+            &format!("panel \"main\" {{\n image-source \"{value}\""),
+        );
+        assert_eq!(
+            lom::config::parse_shell_config(&configured)
+                .unwrap()
+                .0
+                .dma_buf,
+            expected
+        );
+    }
+    for setting in [
+        "image-source \"automatic\"",
+        "image-source \"dma-buf\"; image-source \"owned-ring\"",
+    ] {
+        let configured = source.replace(
+            "panel \"main\" {",
+            &format!("panel \"main\" {{\n {setting}"),
+        );
+        assert!(lom::config::parse_shell_config(&configured).is_err());
+    }
+}

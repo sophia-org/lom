@@ -52,9 +52,9 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
     }
     if command == "--serve" {
         let dma = match options.get("--image-source") {
-            None => false,
-            Some(value) if value == "owned-ring" => false,
-            Some(value) if value == "dma-buf" => true,
+            None => None,
+            Some(value) if value == "owned-ring" => Some(false),
+            Some(value) if value == "dma-buf" => Some(true),
             _ => return Err("--image-source must be owned-ring or dma-buf".into()),
         };
         return serve::run(dma);

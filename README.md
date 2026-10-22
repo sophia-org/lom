@@ -71,9 +71,11 @@ the panel followed by its theme:
 lom --serve
 ```
 
-The default image source is the owned ring. An experimental supervisor profile
-can explicitly select `lom --serve --image-source dma-buf` for opaque,
-producer-completed GPU buffers. This requires Sophia's r10 DMA capture grant
+The default image source is the owned ring. Put `image-source "dma-buf"` inside
+the `panel` node of the protected shell configuration to opt into opaque,
+producer-completed GPU buffers. The supervisor still launches `lom --serve`.
+An explicit `--image-source owned-ring|dma-buf` argument overrides the config
+when the caller controls the arguments. DMA requires Sophia's r10 capture grant
 and currently one output/device; an unavailable grant fails startup. It does
 not silently fall back. Native export and EGL import controls have passed;
 full Session presentation and performance qualification are still pending.

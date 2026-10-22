@@ -136,6 +136,7 @@ pub(crate) fn parse_panel(source: &str, node: &KdlNode) -> Result<PanelConfig, C
         .ok_or_else(|| error(source, node, "expected nonempty panel name"))?
         .to_owned();
     let mut panel = PanelConfig {
+        dma_buf: false,
         name,
         position: Position::Bottom,
         height: 42,
@@ -148,6 +149,13 @@ pub(crate) fn parse_panel(source: &str, node: &KdlNode) -> Result<PanelConfig, C
     for child in children(source, node)? {
         unique(source, child, &mut seen)?;
         match child.name().value() {
+            "image-source" => {
+                panel.dma_buf = match string(source, child)?.as_str() {
+                    "owned-ring" => false,
+                    "dma-buf" => true,
+                    _ => return Err(error(source, child, "expected owned-ring or dma-buf")),
+                };
+            }
             "position" => {
                 panel.position = match string(source, child)?.as_str() {
                     "top" => Position::Top,

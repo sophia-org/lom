@@ -266,8 +266,8 @@ location to Lom.
 
 ## 6. GPU rendering and resource lifetimes
 
-The default shell transport remains the owned ring. The explicit
-`--serve --image-source dma-buf` option requests Sophia's experimental r10
+The default shell transport remains the owned ring. The protected panel's
+`image-source "dma-buf"` setting requests Sophia's experimental r10
 capture path and fails if that capability is unavailable. `shell-gpu` exports
 producer-completed LINEAR (modifier 0) XRGB8888 DMA-BUFs after a fenced release
 to `VK_QUEUE_FAMILY_FOREIGN_EXT`. Lom retains each frame until the SDK observes
