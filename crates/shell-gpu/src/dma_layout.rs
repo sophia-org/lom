@@ -66,6 +66,11 @@ impl Frames {
             .ok()
             .map(|_| Slot(Arc::clone(&self.0)))
     }
+
+    /// Whether `slot` was acquired from this renderer's bound.
+    pub(super) fn owns(&self, slot: &Slot) -> bool {
+        Arc::ptr_eq(&self.0, &slot.0)
+    }
 }
 
 impl Drop for Slot {

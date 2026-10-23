@@ -70,3 +70,14 @@ fn at_most_four_frames_are_retained_and_a_dropped_frame_frees_its_slot() {
     drop((live, again));
     assert!(frames.clone().acquire().is_some(), "clones share one bound");
 }
+
+#[test]
+fn a_slot_is_owned_only_by_the_bound_it_came_from() {
+    let frames = Frames::default();
+    let other = Frames::default();
+    let slot = frames.acquire().unwrap();
+    assert!(frames.owns(&slot));
+    assert!(frames.clone().owns(&slot), "clones are the same renderer");
+    assert!(!other.owns(&slot), "another renderer's frame is refused");
+    assert!(!frames.owns(&other.acquire().unwrap()));
+}

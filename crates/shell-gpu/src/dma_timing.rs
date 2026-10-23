@@ -34,8 +34,12 @@ pub struct DmaTiming {
     /// Dropping an exported frame's wgpu texture only. Closing its descriptor
     /// and releasing its retention slot follow and are excluded. wgpu may
     /// defer Vulkan destruction to a later device poll, which then counts in
-    /// that export's draw stage.
+    /// that export's draw stage. A frame counts once however often reused.
     pub destroy: StageTiming,
+    /// A whole redraw of a reused frame: Vello render, foreign return, blit
+    /// and hand-off encoding, their one submission, the bounded completion
+    /// wait and dropping the source. It records nothing in the other stages.
+    pub reuse: StageTiming,
 }
 
 #[derive(Clone, Copy)]
@@ -45,6 +49,7 @@ pub(super) enum Stage {
     Release,
     Export,
     Destroy,
+    Reuse,
 }
 
 #[derive(Default)]
@@ -66,7 +71,7 @@ impl Cell {
 
 /// Shared by the renderer and its exported frames; disabled is `None`.
 #[derive(Clone, Default)]
-pub(super) struct Timer(Option<Arc<[Cell; 5]>>);
+pub(super) struct Timer(Option<Arc<[Cell; 6]>>);
 
 /// The start of one stage, taken and recorded on the same thread.
 pub(super) struct Mark {
@@ -111,6 +116,7 @@ impl Timer {
             release: cells[Stage::Release as usize].totals(),
             export: cells[Stage::Export as usize].totals(),
             destroy: cells[Stage::Destroy as usize].totals(),
+            reuse: cells[Stage::Reuse as usize].totals(),
         })
     }
 }

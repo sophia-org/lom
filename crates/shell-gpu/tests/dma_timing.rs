@@ -49,6 +49,23 @@ fn completed_stages_accumulate_thread_cpu_and_wall_time() {
 }
 
 #[test]
+fn a_reuse_counts_only_in_its_own_stage() {
+    let mut timer = Timer::default();
+    timer.set_enabled(true);
+    timer.record(Stage::Reuse, timer.start());
+    let totals = timer.totals().unwrap();
+    assert_eq!(totals.reuse.count, 1);
+    assert_eq!(
+        DmaTiming {
+            reuse: Default::default(),
+            ..totals
+        },
+        DmaTiming::default(),
+        "no fresh stage is counted for a reused frame"
+    );
+}
+
+#[test]
 fn a_frame_clone_shares_totals_until_timing_is_reset() {
     let mut timer = Timer::default();
     timer.set_enabled(true);

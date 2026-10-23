@@ -6,6 +6,8 @@
 //! Host synchronization: `vkQueueSubmit` on wgpu's raw queue is sound only
 //! because every queue submission happens inside a `&mut GpuPreview` call.
 //! A `DmaFrame` dropped on another thread only destroys its texture.
+mod reuse;
+
 use super::dma_layout::{self, Slot};
 use super::dma_timing::{DmaTiming, Stage, Timer};
 use ash::vk;
@@ -40,6 +42,8 @@ const EXTENSIONS: [&std::ffi::CStr; 4] = [
 pub struct DmaFrame {
     /// Taken only by `Drop`, so its destruction can be timed.
     texture: Option<wgpu::Texture>,
+    /// The texture's raw image, for the reuse queue-family barriers.
+    image: vk::Image,
     fd: OwnedFd,
     width: u32,
     height: u32,
@@ -94,7 +98,9 @@ impl DmaFrame {
 /// stays alive and is never destroyed; the renderer refuses new work.
 pub(super) struct Stalled {
     _source: Option<wgpu::Texture>,
-    _target: wgpu::Texture,
+    _target: Option<wgpu::Texture>,
+    /// A reused frame, kept whole so it never drops or records a destroy.
+    _frame: Option<DmaFrame>,
     _release: Option<Box<Release>>,
 }
 
@@ -255,7 +261,8 @@ impl super::GpuPreview {
         if let Some(error) = error {
             self.stalled = Some(Stalled {
                 _source: Some(source),
-                _target: target.texture,
+                _target: Some(target.texture),
+                _frame: None,
                 _release: release,
             });
             return Err(error);
@@ -276,6 +283,7 @@ impl super::GpuPreview {
         self.dma_timing.record(Stage::Export, mark);
         Ok(DmaFrame {
             texture: Some(target.texture),
+            image: target.image,
             fd,
             width,
             height,
@@ -477,21 +485,7 @@ impl super::GpuPreview {
             Ok(buffers) => buffers[0],
             Err(error) => return refused(&device, pool, error),
         };
-        let barrier = vk::ImageMemoryBarrier::default()
-            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-            .dst_access_mask(vk::AccessFlags::empty())
-            .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-            .new_layout(vk::ImageLayout::GENERAL)
-            .src_queue_family_index(family)
-            .dst_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
-            .image(image)
-            .subresource_range(vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1,
-            });
+        let barrier = handoff(image, family);
         // SAFETY: recording into a fresh buffer; the image is alive and was
         // last used by wgpu's submission just made on this queue family.
         let recorded = unsafe {
@@ -504,8 +498,8 @@ impl super::GpuPreview {
                 .and_then(|()| {
                     device.cmd_pipeline_barrier(
                         command,
-                        vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                        vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+                        HANDOFF_STAGES.0,
+                        HANDOFF_STAGES.1,
                         vk::DependencyFlags::empty(),
                         &[],
                         &[],
@@ -587,6 +581,35 @@ impl super::GpuPreview {
         // SAFETY: vkGetMemoryFdKHR transfers a new descriptor to the caller.
         Ok(unsafe { OwnedFd::from_raw_fd(raw) })
     }
+}
+
+/// The one color subresource of an export image.
+const COLOR: vk::ImageSubresourceRange = vk::ImageSubresourceRange {
+    aspect_mask: vk::ImageAspectFlags::COLOR,
+    base_mip_level: 0,
+    level_count: 1,
+    base_array_layer: 0,
+    layer_count: 1,
+};
+
+/// Source and destination stages of the foreign hand-off barrier.
+const HANDOFF_STAGES: (vk::PipelineStageFlags, vk::PipelineStageFlags) = (
+    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+    vk::PipelineStageFlags::BOTTOM_OF_PIPE,
+);
+
+/// Release a drawn image from `family` to the foreign queue family, from
+/// wgpu's COLOR_ATTACHMENT_OPTIMAL to the GENERAL layout an importer assumes.
+fn handoff(image: vk::Image, family: u32) -> vk::ImageMemoryBarrier<'static> {
+    vk::ImageMemoryBarrier::default()
+        .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+        .dst_access_mask(vk::AccessFlags::empty())
+        .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        .new_layout(vk::ImageLayout::GENERAL)
+        .src_queue_family_index(family)
+        .dst_queue_family_index(vk::QUEUE_FAMILY_FOREIGN_EXT)
+        .image(image)
+        .subresource_range(COLOR)
 }
 
 /// LINEAR B8G8R8A8 color attachments exportable as DMA-BUF, at this size.
