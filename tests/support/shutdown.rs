@@ -65,7 +65,8 @@ impl Drop for Process {
     fn drop(&mut self) {
         if std::thread::panicking() {
             eprintln!(
-                "child log: {}",
+                "child status: {:?}; child log: {}",
+                self.child.try_wait(),
                 fs::read_to_string(self.root.join("log")).unwrap_or_default()
             );
         }
@@ -81,6 +82,11 @@ fn wait_until(mut condition: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+/// The host's merged-usr link, so the ELF interpreter path resolves as it
+/// does outside: Ubuntu links /lib64 to usr/lib64, Void and Arch to usr/lib.
+fn host_link(path: &str, merged: &str) -> PathBuf {
+    fs::read_link(path).unwrap_or_else(|_| merged.into())
+}
 fn start(name: &str) -> (Process, UnixListener) {
     let root = std::env::temp_dir().join(format!("lom-stop-{}-{name}", std::process::id()));
     fs::create_dir(&root).unwrap();
@@ -93,18 +99,13 @@ fn start(name: &str) -> (Process, UnixListener) {
     listener.set_nonblocking(true).unwrap();
     let log = fs::File::create(root.join("log")).unwrap();
     let child = Command::new("bwrap")
+        .args(["--ro-bind", "/usr", "/usr", "--symlink"])
+        .arg(host_link("/bin", "usr/bin"))
+        .args(["/bin", "--symlink"])
+        .arg(host_link("/lib", "usr/lib"))
+        .args(["/lib", "--symlink"])
+        .arg(host_link("/lib64", "usr/lib"))
         .args([
-            "--ro-bind",
-            "/usr",
-            "/usr",
-            "--symlink",
-            "usr/bin",
-            "/bin",
-            "--symlink",
-            "usr/lib",
-            "/lib",
-            "--symlink",
-            "usr/lib",
             "/lib64",
             "--ro-bind",
             "/etc",
