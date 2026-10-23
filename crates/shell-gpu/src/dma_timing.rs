@@ -23,9 +23,11 @@ pub struct DmaTiming {
     /// Admission, retention slot, exportable image, dedicated memory and its
     /// wgpu registration.
     pub setup: StageTiming,
-    /// Vello render, export blit, submission and the bounded wait for the draw.
+    /// Vello render, export blit encoding and submission; no GPU wait.
     pub draw: StageTiming,
-    /// Foreign queue-family release: recording, submission and its fence wait.
+    /// Foreign queue-family release: recording, submission, the one fence
+    /// wait that covers both the draw and the release, wgpu's bounded
+    /// cleanup poll, and dropping the rendered source texture.
     pub release: StageTiming,
     /// DMA-BUF descriptor export, size query and layout check.
     pub export: StageTiming,

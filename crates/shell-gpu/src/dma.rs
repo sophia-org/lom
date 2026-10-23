@@ -118,7 +118,7 @@ impl Release {
 
 enum Released {
     Done,
-    /// Nothing was submitted; the target may be dropped.
+    /// No release was submitted, but the draw may still be pending.
     Refused(String),
     Stalled(Option<Box<Release>>, String),
 }
@@ -243,32 +243,25 @@ impl super::GpuPreview {
                 .create_view(&wgpu::TextureViewDescriptor::default()),
         );
         let submission = self.queue.submit([encoder.finish()]);
-        if let Err(error) = self.device.poll(wgpu::PollType::Wait {
-            submission_index: Some(submission),
-            timeout: Some(remaining(deadline)),
-        }) {
+        self.dma_timing.record(Stage::Draw, mark);
+        let mark = self.dma_timing.start();
+        // The draw may still be pending on every failure, so the source and
+        // target are kept with whatever part of the release was submitted.
+        let (release, error) = match self.release(target.image, submission, deadline) {
+            Released::Done => (None, None),
+            Released::Refused(error) => (None, Some(error)),
+            Released::Stalled(release, error) => (release, Some(error)),
+        };
+        if let Some(error) = error {
             self.stalled = Some(Stalled {
                 _source: Some(source),
                 _target: target.texture,
-                _release: None,
+                _release: release,
             });
-            return Err(format!("GPU DMA-BUF draw: {error}"));
+            return Err(error);
         }
         drop(source);
-        self.dma_timing.record(Stage::Draw, mark);
-        let mark = self.dma_timing.start();
-        match self.release(target.image, deadline) {
-            Released::Done => self.dma_timing.record(Stage::Release, mark),
-            Released::Refused(error) => return Err(error),
-            Released::Stalled(release, error) => {
-                self.stalled = Some(Stalled {
-                    _source: None,
-                    _target: target.texture,
-                    _release: release,
-                });
-                return Err(error);
-            }
-        }
+        self.dma_timing.record(Stage::Release, mark);
         let mark = self.dma_timing.start();
         let fd = self.export_fd(target.memory)?;
         let source_bytes = rustix::fs::seek(&fd, rustix::fs::SeekFrom::End(0))
@@ -432,11 +425,18 @@ impl super::GpuPreview {
         })
     }
 
-    /// Release the drawn image to the foreign queue family after wgpu's
-    /// submission completed. wgpu 28 leaves a render target it last drew in
-    /// COLOR_ATTACHMENT_OPTIMAL; GENERAL is the layout a non-Vulkan importer
-    /// of a LINEAR DMA-BUF can assume.
-    fn release(&self, image: vk::Image, deadline: Instant) -> Released {
+    /// Release the drawn image to the foreign queue family, submitted right
+    /// after wgpu's draw on the same queue with no wait between. The barrier's
+    /// first scope covers that earlier submission, so the release fence proves
+    /// both finished; wgpu is then polled for its own bookkeeping. wgpu 28
+    /// leaves a render target it last drew in COLOR_ATTACHMENT_OPTIMAL; GENERAL
+    /// is the layout a non-Vulkan importer of a LINEAR DMA-BUF can assume.
+    fn release(
+        &self,
+        image: vk::Image,
+        draw: wgpu::SubmissionIndex,
+        deadline: Instant,
+    ) -> Released {
         // SAFETY: borrowed only to read raw handles of this device and queue.
         let Some(hal) = (unsafe { self.device.as_hal::<Vulkan>() }) else {
             return Released::Refused("wgpu device has no Vulkan HAL".into());
@@ -493,7 +493,7 @@ impl super::GpuPreview {
                 layer_count: 1,
             });
         // SAFETY: recording into a fresh buffer; the image is alive and was
-        // last used by the completed wgpu submission on this queue family.
+        // last used by wgpu's submission just made on this queue family.
         let recorded = unsafe {
             device
                 .begin_command_buffer(
@@ -551,7 +551,13 @@ impl super::GpuPreview {
         } {
             Ok(()) => {
                 release.destroy();
-                Released::Done
+                match self.device.poll(wgpu::PollType::Wait {
+                    submission_index: Some(draw),
+                    timeout: Some(remaining(deadline)),
+                }) {
+                    Ok(_) => Released::Done,
+                    Err(error) => Released::Stalled(None, format!("GPU DMA-BUF draw: {error}")),
+                }
             }
             Err(error) => Released::Stalled(
                 Some(Box::new(release)),
