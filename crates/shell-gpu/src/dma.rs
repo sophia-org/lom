@@ -7,6 +7,7 @@
 //! because every queue submission happens inside a `&mut GpuPreview` call.
 //! A `DmaFrame` dropped on another thread only destroys its texture.
 use super::dma_layout::{self, Slot};
+use super::dma_timing::{DmaTiming, Stage, Timer};
 use ash::vk;
 use imaging::record::Scene;
 use masonry_imaging::TextureRenderer;
@@ -37,12 +38,22 @@ const EXTENSIONS: [&std::ffi::CStr; 4] = [
 /// One completed, released frame. Its GPU allocation lives as long as this
 /// value; keep it unchanged until Sophia's matching SourceReleased.
 pub struct DmaFrame {
-    _texture: wgpu::Texture,
+    /// Taken only by `Drop`, so its destruction can be timed.
+    texture: Option<wgpu::Texture>,
     fd: OwnedFd,
     width: u32,
     height: u32,
     layout: dma_layout::Layout,
     _slot: Slot,
+    timer: Timer,
+}
+
+impl Drop for DmaFrame {
+    fn drop(&mut self) {
+        let mark = self.timer.start();
+        drop(self.texture.take());
+        self.timer.record(Stage::Destroy, mark);
+    }
 }
 
 const _: fn() = || {
@@ -172,6 +183,21 @@ fn remaining(deadline: Instant) -> Duration {
 }
 
 impl super::GpuPreview {
+    /// Enable or disable per-stage DMA-BUF export timing; it starts disabled.
+    /// Re-enabling after disabling starts again from zero.
+    pub fn set_dma_timing_enabled(&mut self, enabled: bool) {
+        self.dma_timing.set_enabled(enabled);
+    }
+
+    /// Cumulative export timing, or `None` while timing is disabled. A frame
+    /// exported while enabled records its destruction even if timing was
+    /// disabled since. Each total is a separate relaxed atomic read, not a
+    /// coherent snapshot while frames drop on other threads; read it on the
+    /// thread that drops the frames, after the drop.
+    pub fn dma_timing(&self) -> Option<DmaTiming> {
+        self.dma_timing.totals()
+    }
+
     /// Render a bounded scene into a new LINEAR XRGB8888 DMA-BUF on the
     /// granted render node. Returns only after the GPU finished drawing and
     /// released the image to a foreign queue family; there is no CPU
@@ -183,6 +209,7 @@ impl super::GpuPreview {
         width: u32,
         height: u32,
     ) -> Result<DmaFrame, String> {
+        let mark = self.dma_timing.start();
         self.admit(width, height)?;
         if self.adapter_drm.is_none() {
             return Err("diagnostic renderer has no GPU grant for DMA-BUF export".into());
@@ -193,6 +220,8 @@ impl super::GpuPreview {
             .ok_or("four exported DMA-BUF frames are still retained")?;
         let deadline = Instant::now() + EXPORT_TIMEOUT;
         let target = self.export_target(width, height)?;
+        self.dma_timing.record(Stage::Setup, mark);
+        let mark = self.dma_timing.start();
         let source = self
             .renderer
             .render_source_texture(scene, width, height)
@@ -226,8 +255,10 @@ impl super::GpuPreview {
             return Err(format!("GPU DMA-BUF draw: {error}"));
         }
         drop(source);
+        self.dma_timing.record(Stage::Draw, mark);
+        let mark = self.dma_timing.start();
         match self.release(target.image, deadline) {
-            Released::Done => {}
+            Released::Done => self.dma_timing.record(Stage::Release, mark),
             Released::Refused(error) => return Err(error),
             Released::Stalled(release, error) => {
                 self.stalled = Some(Stalled {
@@ -238,6 +269,7 @@ impl super::GpuPreview {
                 return Err(error);
             }
         }
+        let mark = self.dma_timing.start();
         let fd = self.export_fd(target.memory)?;
         let source_bytes = rustix::fs::seek(&fd, rustix::fs::SeekFrom::End(0))
             .map_err(|error| format!("DMA-BUF size: {error}"))?;
@@ -248,13 +280,15 @@ impl super::GpuPreview {
             target.row_pitch,
             source_bytes,
         )?;
+        self.dma_timing.record(Stage::Export, mark);
         Ok(DmaFrame {
-            _texture: target.texture,
+            texture: Some(target.texture),
             fd,
             width,
             height,
             layout,
             _slot: slot,
+            timer: self.dma_timing.clone(),
         })
     }
 

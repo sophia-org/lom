@@ -7,10 +7,12 @@ mod admission;
 mod completion;
 mod dma;
 mod dma_layout;
+mod dma_timing;
 mod drm;
 mod readback;
 pub use admission::GpuGrant;
 pub use dma::DmaFrame;
+pub use dma_timing::{DmaTiming, StageTiming};
 use readback::PendingReadback;
 
 /// Auditable identity of the GPU worker admitted for one shell connection.
@@ -125,6 +127,7 @@ pub struct GpuPreview {
     stalled: Option<dma::Stalled>,
     frames: dma_layout::Frames,
     blitter: Option<wgpu::util::TextureBlitter>,
+    dma_timing: dma_timing::Timer,
     adapter_drm: Option<drm::DrmRenderIdentity>,
     _render_node: Option<std::fs::File>,
 }
@@ -206,6 +209,7 @@ impl GpuPreview {
             stalled: None,
             frames: dma_layout::Frames::default(),
             blitter: None,
+            dma_timing: dma_timing::Timer::default(),
             adapter_drm,
             _render_node: render_node,
         })
