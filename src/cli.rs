@@ -5,6 +5,7 @@ mod content_proof;
 mod preview;
 mod serve;
 mod shutdown;
+mod work_statistics;
 
 use crate::{
     config::{PanelConfig, Theme, parse_config, parse_theme},

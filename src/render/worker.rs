@@ -4,7 +4,12 @@ use super::{GpuAdmissionEvidence, GpuGrant, GpuPreview};
 use crate::model::Model;
 use crate::service::{ContentRenderer, RenderIdentity, RenderImage, RenderedContent};
 use crate::ui::PreviewDriver;
+use std::os::fd::{AsFd, BorrowedFd};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::{Duration, Instant};
 
 const GPU_JOB_TIMEOUT: Duration = Duration::from_secs(2);
@@ -63,6 +68,7 @@ impl RetainedHosts {
 
 /// Capacity-one renderer executor. The worker alone owns Vello and wgpu.
 pub struct RendererWorker {
+    wake: Arc<crate::wake::Wake>,
     dma: bool,
     requests: SyncSender<RenderJob>,
     completions: Receiver<Result<RenderedContent, String>>,
@@ -73,18 +79,35 @@ pub struct RendererWorker {
 impl RendererWorker {
     /// Validate the admitted adapter and initialize the worker before serving.
     pub fn start(grant: GpuGrant) -> Result<(Self, GpuAdmissionEvidence), String> {
-        Self::start_source(grant, false)
+        Self::start_source(grant, false, None)
     }
 
     /// Explicit DMA capture worker; no readback fallback on refusal.
     pub fn start_dma(grant: GpuGrant) -> Result<(Self, GpuAdmissionEvidence), String> {
-        Self::start_source(grant, true)
+        Self::start_source(grant, true, None)
     }
 
-    fn start_source(grant: GpuGrant, dma: bool) -> Result<(Self, GpuAdmissionEvidence), String> {
+    pub(crate) fn start_until_stopped(
+        grant: GpuGrant,
+        dma: bool,
+        stop: &AtomicBool,
+        fd: BorrowedFd<'_>,
+    ) -> Result<(Self, GpuAdmissionEvidence), String> {
+        Self::start_source(grant, dma, Some((stop, fd)))
+    }
+
+    fn start_source(
+        grant: GpuGrant,
+        dma: bool,
+        stop: Option<(&AtomicBool, BorrowedFd<'_>)>,
+    ) -> Result<(Self, GpuAdmissionEvidence), String> {
         let (requests, incoming) = mpsc::sync_channel::<RenderJob>(1);
         let (completed, completions) = mpsc::sync_channel(1);
         let (ready, readiness) = mpsc::sync_channel(1);
+        let wake =
+            Arc::new(crate::wake::Wake::new().map_err(|error| format!("worker wake: {error}"))?);
+        let completed = crate::wake::Sender::new(completed, wake.clone());
+        let ready = crate::wake::Sender::new(ready, wake.clone());
         std::thread::Builder::new()
             .name("lom-gpu".into())
             .spawn(move || {
@@ -117,11 +140,35 @@ impl RendererWorker {
                 }
             })
             .map_err(|error| format!("start GPU worker: {error}"))?;
-        let evidence = readiness
-            .recv_timeout(GPU_JOB_TIMEOUT)
-            .map_err(|error| format!("GPU worker startup: {error}"))??;
+        let deadline = Instant::now() + GPU_JOB_TIMEOUT;
+        let evidence = loop {
+            wake.clear()
+                .map_err(|error| format!("worker startup wake: {error}"))?;
+            if stop.is_some_and(|(flag, _)| flag.load(Ordering::Relaxed)) {
+                return Err("shell stopping".into());
+            }
+            match readiness.try_recv() {
+                Ok(result) => break result?,
+                Err(TryRecvError::Disconnected) => {
+                    return Err("GPU worker stopped during startup".into());
+                }
+                Err(TryRecvError::Empty) => {}
+            }
+            if Instant::now() >= deadline {
+                return Err("GPU worker startup timed out".into());
+            }
+            let mut fds = vec![crate::wake::interest(wake.as_fd(), libc::POLLIN)];
+            if let Some((_, fd)) = stop {
+                fds.push(crate::wake::interest(fd, libc::POLLIN));
+            }
+            crate::wake::wait(
+                &mut fds,
+                Some(deadline.saturating_duration_since(Instant::now())),
+            )?;
+        };
         Ok((
             Self {
+                wake,
                 dma,
                 requests,
                 completions,
@@ -134,6 +181,28 @@ impl RendererWorker {
 }
 
 impl ContentRenderer for RendererWorker {
+    fn completion_fd(&self) -> Option<BorrowedFd<'_>> {
+        Some(self.wake.as_fd())
+    }
+
+    fn completion_deadline(&self) -> Option<Instant> {
+        self.submitted_at.map(|started| started + self.timeout)
+    }
+
+    fn clear_completion_wake(&mut self) -> Result<(), String> {
+        self.wake
+            .clear()
+            .map_err(|error| format!("worker wake: {error}"))?;
+        if self.submitted_at.is_none() {
+            match self.completions.try_recv() {
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => return Err("GPU worker stopped".into()),
+                Ok(_) => return Err("GPU worker completed an unowned job".into()),
+            }
+        }
+        Ok(())
+    }
+
     fn uses_dma_buf(&self) -> bool {
         self.dma
     }

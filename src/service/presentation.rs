@@ -28,7 +28,7 @@ pub(super) struct PendingPresentation {
     raster: RasterSummary,
     raster_reused: bool,
     phase: PresentationPhase,
-    deadline: Instant,
+    pub(super) deadline: Instant,
     presentation_epoch: u64,
     indicator_revision: u64,
     model: Model,
@@ -272,6 +272,11 @@ impl<R: ContentRenderer> ShellService<R> {
         };
         match offered {
             Ok(offer) => {
+                if let Some(stats) = &mut self.statistics {
+                    stats.uploads = stats.uploads.saturating_add(1);
+                    stats.upload_bytes =
+                        stats.upload_bytes.saturating_add(pixels.byte_len() as u64);
+                }
                 if pending.resource.id == 0 {
                     self.next_resource = self
                         .next_resource
@@ -407,6 +412,9 @@ impl<R: ContentRenderer> ShellService<R> {
         if permit.state != PERMIT_GRANTED || permit.reason != ContentReason::None as u16 {
             return Err(format!("frame demand was refused: {}", permit.reason));
         }
+        pending.deadline = pending
+            .deadline
+            .min(Instant::now() + Duration::from_millis(u64::from(permit.ttl_ms)));
         pending.permit = Some(permit);
         pending.phase = PresentationPhase::PermitGranted;
         self.advance_candidate_enqueue(pending)
@@ -435,6 +443,11 @@ impl<R: ContentRenderer> ShellService<R> {
             return Ok(false);
         }
         pending.candidate = candidate;
+        if pending.raster_reused
+            && let Some(stats) = &mut self.statistics
+        {
+            stats.raster_reuses = stats.raster_reuses.saturating_add(1);
+        }
         pending.permit = None;
         self.next_candidate_generation = candidate
             .checked_add(1)

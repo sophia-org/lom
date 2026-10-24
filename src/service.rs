@@ -4,9 +4,12 @@ mod custody;
 mod image;
 mod presentation;
 mod scheduler;
+mod statistics;
 mod target_generations;
+mod wait;
 pub use image::RenderImage;
 use presentation::PendingPresentation;
+pub use statistics::WorkStatistics;
 
 use crate::{
     config::{ModuleKind, PanelConfig, Position, Theme},
@@ -95,6 +98,18 @@ pub struct RenderIdentity {
 
 /// Produces one complete panel resource from passive application state.
 pub trait ContentRenderer {
+    /// Readable on completion or worker exit. None keeps bounded polling for jobs.
+    fn completion_fd(&self) -> Option<std::os::fd::BorrowedFd<'_>> {
+        None
+    }
+    /// Deadline at which the owner must poll an outstanding job even without I/O.
+    fn completion_deadline(&self) -> Option<Instant> {
+        None
+    }
+    /// Clear readiness before inspecting completion state; also check idle health.
+    fn clear_completion_wake(&mut self) -> Result<(), String> {
+        Ok(())
+    }
     /// Whether this renderer supplies producer-completed DMA sources.
     fn uses_dma_buf(&self) -> bool {
         false
@@ -166,6 +181,7 @@ enum ResourceState {
 /// supplied renderer owns toolkit/GPU policy and returns immutable wire pixels.
 pub struct ShellService<R> {
     stop: Arc<AtomicBool>,
+    stop_wake: Option<std::os::unix::net::UnixStream>,
     connection: ShellConnection,
     custody: custody::CustodyWatch,
     config: PanelConfig,
@@ -190,6 +206,7 @@ pub struct ShellService<R> {
     rendering_panel: Option<usize>,
     next_panel: usize,
     progressed: bool,
+    statistics: Option<WorkStatistics>,
 }
 
 impl<R: ContentRenderer> ShellService<R> {
@@ -208,7 +225,7 @@ impl<R: ContentRenderer> ShellService<R> {
             theme,
             allowance,
             renderer,
-            Arc::new(AtomicBool::new(false)),
+            (Arc::new(AtomicBool::new(false)), None),
             endpoint_dir,
         )
     }
@@ -218,11 +235,13 @@ impl<R: ContentRenderer> ShellService<R> {
         config: PanelConfig,
         theme: Theme,
         allowance: u32,
-        renderer: R,
-        stop: Arc<AtomicBool>,
+        mut renderer: R,
+        stop: (Arc<AtomicBool>, Option<std::os::unix::net::UnixStream>),
         endpoint_dir: PathBuf,
     ) -> Result<Self, String> {
-        let (_, ShellContentRecord::Limits(limits)) = receive_content(&mut connection, &stop)?
+        let (stop, stop_wake) = stop;
+        let (_, ShellContentRecord::Limits(limits)) =
+            receive_content(&mut connection, &stop, stop_wake.as_ref(), &mut renderer)?
         else {
             return Err("first content record was not ContentLimits".into());
         };
@@ -257,7 +276,7 @@ impl<R: ContentRenderer> ShellService<R> {
             .map_err(|error| format!("image channel is required: {error}"))?;
         }
         let (facts_transaction, ShellContentRecord::OutputFacts(facts)) =
-            receive_content(&mut connection, &stop)?
+            receive_content(&mut connection, &stop, stop_wake.as_ref(), &mut renderer)?
         else {
             return Err("ContentLimits was not followed by ContentOutputFacts".into());
         };
@@ -275,6 +294,7 @@ impl<R: ContentRenderer> ShellService<R> {
             .map_err(|error| format!("initial output facts: {error:?}"))?;
         let mut service = Self {
             stop,
+            stop_wake,
             connection,
             custody: Default::default(),
             config,
@@ -299,6 +319,7 @@ impl<R: ContentRenderer> ShellService<R> {
             rendering_panel: None,
             next_panel: 0,
             progressed: false,
+            statistics: None,
         };
         service.allocate_panels(allowance)?;
         Ok(service)
@@ -308,6 +329,9 @@ impl<R: ContentRenderer> ShellService<R> {
     /// replacement on every output. Returns the number of outputs presented.
     pub fn step(&mut self) -> Result<usize, String> {
         self.check_stop()?;
+        if let Some(stats) = &mut self.statistics {
+            stats.service_turns = stats.service_turns.saturating_add(1);
+        }
         self.service_turn()
     }
 
@@ -319,28 +343,6 @@ impl<R: ContentRenderer> ShellService<R> {
         }
     }
 
-    /// Maximum idle sleep before servicing queued work or an SDK retry.
-    /// The caller still calls `step` after any incoming observations.
-    pub fn idle_wait(&self) -> Duration {
-        self.connection
-            .wake_deadline()
-            .map_or(IDLE_POLL, |deadline| {
-                deadline
-                    .saturating_duration_since(Instant::now())
-                    .min(IDLE_POLL)
-            })
-    }
-
-    /// Wait for protocol readiness when the last bounded turn made no local
-    /// progress. The short ceiling also services renderer completions and clocks.
-    pub fn wait_for_work(&mut self) -> Result<(), String> {
-        if self.progressed {
-            return Ok(());
-        }
-        self.connection
-            .wait_for_io(self.idle_wait())
-            .map_err(|error| format!("shell readiness wait: {error}"))
-    }
     fn transaction(&mut self) -> Result<TransactionId, String> {
         let value = self.next_transaction;
         self.next_transaction = value
@@ -649,7 +651,14 @@ impl<R: ContentRenderer> ShellService<R> {
             if Instant::now() >= deadline {
                 return Err("shell content response timed out".into());
             }
-            std::thread::sleep(self.idle_wait());
+            self.renderer.clear_completion_wake()?;
+            use std::os::fd::AsFd;
+            wait::connection_wait(
+                &self.connection,
+                self.stop_wake.as_ref().map(AsFd::as_fd),
+                self.renderer.completion_fd(),
+                Some(deadline.saturating_duration_since(Instant::now())),
+            )?;
         }
     }
 }
@@ -663,15 +672,26 @@ fn pixel_checksum(bytes: &[u8]) -> u64 {
 fn receive_content(
     connection: &mut ShellConnection,
     stop: &AtomicBool,
+    stop_wake: Option<&std::os::unix::net::UnixStream>,
+    renderer: &mut impl ContentRenderer,
 ) -> Result<(TransactionId, ShellContentRecord), String> {
     let deadline = Instant::now() + RESPONSE_TIMEOUT;
     loop {
         if stop.load(Ordering::Relaxed) {
             return Err("shell stopping".into());
         }
+        renderer.clear_completion_wake()?;
         match connection.poll_content() {
             Ok(Some(record)) => return Ok(record),
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(IDLE_POLL),
+            Ok(None) if Instant::now() < deadline => {
+                use std::os::fd::AsFd;
+                wait::connection_wait(
+                    connection,
+                    stop_wake.map(AsFd::as_fd),
+                    renderer.completion_fd(),
+                    Some(deadline.saturating_duration_since(Instant::now())),
+                )?;
+            }
             Ok(None) => return Err("shell content response timed out".into()),
             Err(error) => return Err(format!("shell content receive failed: {error}")),
         }

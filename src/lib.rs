@@ -10,3 +10,4 @@ pub mod runtime;
 pub mod service;
 pub mod ui;
 pub mod update;
+mod wake;

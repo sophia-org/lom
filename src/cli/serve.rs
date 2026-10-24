@@ -12,16 +12,14 @@ use sophia_shell_protocol::{
     SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER, SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION,
     SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS,
 };
+use std::os::fd::AsFd;
 use std::{path::Path, time::Duration};
 
 pub(super) fn run(dma: Option<bool>) -> Result<(), String> {
-    run_with_renderer(dma, |epoch, dma| {
+    run_with_renderer(dma, |epoch, dma, stop| {
         let grant = GpuGrant::from_environment(epoch)?;
-        let (renderer, admission) = if dma {
-            RendererWorker::start_dma(grant)?
-        } else {
-            RendererWorker::start(grant)?
-        };
+        let (renderer, admission) =
+            RendererWorker::start_until_stopped(grant, dma, &stop.flag, stop.wake.as_fd())?;
         println!("{}", admission.record("lom")?);
         Ok(renderer)
     })
@@ -29,7 +27,7 @@ pub(super) fn run(dma: Option<bool>) -> Result<(), String> {
 
 fn run_with_renderer<R: ContentRenderer>(
     dma: Option<bool>,
-    renderer: impl FnOnce(u64, bool) -> Result<R, String>,
+    renderer: impl FnOnce(u64, bool, &super::shutdown::Shutdown) -> Result<R, String>,
 ) -> Result<(), String> {
     let stop = super::shutdown::Shutdown::install()?;
     let result = serve(&stop, dma, renderer);
@@ -46,7 +44,7 @@ fn run_with_renderer<R: ContentRenderer>(
 fn serve<R: ContentRenderer>(
     stop: &super::shutdown::Shutdown,
     dma: Option<bool>,
-    renderer: impl FnOnce(u64, bool) -> Result<R, String>,
+    renderer: impl FnOnce(u64, bool, &super::shutdown::Shutdown) -> Result<R, String>,
 ) -> Result<(), String> {
     if std::env::var_os("SOPHIA_SHELL_SOCKET").is_some() {
         return Err("SOPHIA_SHELL_SOCKET is unsupported; use SOPHIA_SHELL_9P_SOCKET".into());
@@ -102,7 +100,7 @@ fn serve<R: ContentRenderer>(
         connection.welcome().selected_revision,
         connection.connection_epoch()
     );
-    let renderer = renderer(connection.connection_epoch(), dma)?;
+    let renderer = renderer(connection.connection_epoch(), dma, stop)?;
     stop.check()?;
     let mut service = ShellService::new_until_stopped(
         connection,
@@ -110,15 +108,25 @@ fn serve<R: ContentRenderer>(
         theme,
         allowance,
         renderer,
-        stop.flag.clone(),
+        (
+            stop.flag.clone(),
+            Some(stop.wake.try_clone().map_err(|error| error.to_string())?),
+        ),
         endpoint_dir,
     )?;
-    while !stop.requested() {
-        if service.step()? == 0 {
-            service.wait_for_work()?;
+    let mut reporter = super::work_statistics::Reporter::new(&mut service);
+    let result = (|| {
+        while !stop.requested() {
+            let presented = service.step()?;
+            reporter.emit(&service, false)?;
+            if presented == 0 {
+                service.wait_for_work_until(reporter.deadline())?;
+            }
         }
-    }
-    Ok(())
+        Ok(())
+    })();
+    reporter.emit(&service, true)?;
+    result
 }
 
 #[cfg(test)]

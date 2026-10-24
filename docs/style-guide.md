@@ -218,3 +218,7 @@ The external target-generation test compiles the private passive target-generati
 module to exercise lifetime transitions directly. It adds no public API, device
 access or production test body; the real socket service tests exercise its normal
 caller and the distinct indicator revision on actual encoded responses.
+
+The external `tests/wake.rs` target mounts the private wake module to test the
+actual completion/eventfd ordering, disconnect wake and deadline expiry without
+a GPU or a public notification API.

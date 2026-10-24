@@ -3,6 +3,7 @@ use crate::protocol::ContentPixels;
 
 impl<R: ContentRenderer> ShellService<R> {
     pub(super) fn service_turn(&mut self) -> Result<usize, String> {
+        self.renderer.clear_completion_wake()?;
         self.progressed = false;
         self.observe()?;
         if self
@@ -42,6 +43,9 @@ impl<R: ContentRenderer> ShellService<R> {
             && let Some(content) = self.renderer.poll()?
         {
             self.rendering_panel = None;
+            if let Some(stats) = &mut self.statistics {
+                stats.renders_completed = stats.renders_completed.saturating_add(1);
+            }
             self.begin_presentation(index, content)?;
             self.progressed = true;
         }
@@ -69,6 +73,9 @@ impl<R: ContentRenderer> ShellService<R> {
                     panel.allocation.pixel.height,
                     scale,
                 )?;
+                if let Some(stats) = &mut self.statistics {
+                    stats.renders_started = stats.renders_started.saturating_add(1);
+                }
                 panel.dirty = false;
                 panel.interaction_dirty = false;
                 self.rendering_panel = Some(index);

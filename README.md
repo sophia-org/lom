@@ -157,3 +157,13 @@ Do not treat software snapshots as GPU or native acceptance.
 
 Lom code is BSD-3-Clause. Adapted ironbar material and bundled fonts retain their
 licenses; see [THIRD_PARTY.md](THIRD_PARTY.md) and [LICENSE](LICENSE).
+
+### Optional service work counters
+
+`SOPHIA_SHELL_WORK_STATS=1 lom serve ...` emits cumulative
+`sophia_shell_work_stats schema=1 client=lom` records every five seconds and at
+service exit (`final=1`). Counters cover service turns, readiness waits and
+expirations, renders started/completed, uploads and their declared image bytes,
+and candidates reusing a resident raster. `monotonic_usec` uses CLOCK_MONOTONIC.
+The default is off, with no reporting timer. These counters describe client work;
+they do not establish CPU savings or presentation latency.

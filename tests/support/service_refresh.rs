@@ -135,6 +135,9 @@ fn interaction_refresh_reuses_pixels_and_stays_clickable_with_old_release_held()
         path.parent().unwrap().to_path_buf(),
     )
     .unwrap();
+    assert_eq!(service.work_statistics(), None);
+    service.set_work_statistics_enabled(true);
+    assert_eq!(service.work_statistics(), Some(Default::default()));
     let started = std::time::Instant::now();
     let mut waits = 0;
     let deadline = started + Duration::from_secs(3);
@@ -163,6 +166,16 @@ fn interaction_refresh_reuses_pixels_and_stays_clickable_with_old_release_held()
             .count(),
         1
     );
+    let stats = service.work_statistics().unwrap();
+    assert_eq!(stats.renders_started, 3);
+    assert_eq!(stats.renders_completed, 3);
+    assert_eq!(stats.uploads, 3);
+    assert!(stats.upload_bytes > 0);
+    assert!(stats.raster_reuses > 0);
+    assert!(stats.service_turns > 0);
+    assert!(stats.wait_expirations <= stats.waits);
+    service.set_work_statistics_enabled(false);
+    assert_eq!(service.work_statistics(), None);
     done_tx.send(()).unwrap();
     server.join().unwrap();
     std::fs::remove_file(path).unwrap();

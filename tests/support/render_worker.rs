@@ -13,6 +13,7 @@ fn mailbox_allows_only_one_job_and_reports_one_completion() {
     let (requests, incoming) = mpsc::sync_channel(1);
     let (completed, completions) = mpsc::sync_channel(1);
     let mut worker = RendererWorker {
+        wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         requests,
         completions,
@@ -39,12 +40,15 @@ fn expired_worker_job_is_quarantined_instead_of_reused() {
     let (requests, _incoming) = mpsc::sync_channel(1);
     let (_completed, completions) = mpsc::sync_channel(1);
     let mut worker = RendererWorker {
+        wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         requests,
         completions,
         submitted_at: Some(Instant::now()),
         timeout: Duration::ZERO,
     };
+    assert!(worker.completion_fd().is_some());
+    assert!(worker.completion_deadline().unwrap() <= Instant::now());
     assert!(worker.poll().unwrap_err().contains("remain quarantined"));
     assert!(worker.submit(identity(), model(), 8, 48, 2.0).is_err());
 }
@@ -100,4 +104,30 @@ fn retained_hosts_are_bounded_by_exact_allocation_and_grant_identity() {
     hosts.scene(job(first)).unwrap();
     assert_eq!(hosts.hosts.len(), 1);
     assert!(!hosts.hosts.contains_key(&unchanged));
+}
+
+#[test]
+fn an_idle_worker_clears_late_wakes_and_reports_disconnect() {
+    let (requests, _incoming) = mpsc::sync_channel(1);
+    let (completed, completions) = mpsc::sync_channel(1);
+    let mut worker = RendererWorker {
+        wake: Arc::new(crate::wake::Wake::new().unwrap()),
+        dma: false,
+        requests,
+        completions,
+        submitted_at: None,
+        timeout: Duration::from_secs(1),
+    };
+    worker.wake.notify().unwrap();
+    worker.clear_completion_wake().unwrap();
+    let mut fds = [crate::wake::interest(worker.wake.as_fd(), libc::POLLIN)];
+    assert!(!crate::wake::wait(&mut fds, Some(Duration::ZERO)).unwrap());
+    drop(completed);
+    worker.wake.notify().unwrap();
+    assert!(
+        worker
+            .clear_completion_wake()
+            .unwrap_err()
+            .contains("stopped")
+    );
 }

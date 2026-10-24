@@ -88,17 +88,19 @@ admitted tickets and presentation outcomes; model observations are projections
 of those outcomes.
 
 The service continues after bounded local progress and otherwise waits on SDK
-socket readiness. The wait is capped at four milliseconds for renderer and
-clock observations. Sleeping unconditionally between service turns would add
-that delay to each dependent 9P operation in a panel update.
+socket, image-channel, renderer-completion and shutdown readiness. Protocol,
+release and GPU-job deadlines bound that wait. A configured clock adds the next
+whole-second deadline; a panel without a clock adds none. Only injected renderers
+without a completion descriptor retain a four-millisecond pending-job fallback.
 
 The serve entry installs SIGTERM and SIGINT handlers before startup. Handlers
-only set a cancellation flag. Normal code stops service turns, closes the 9P
+set a cancellation flag and wake the owner's signal pipe. Normal code stops service turns, closes the 9P
 connection and drops local owners, including when Lom is sandbox PID 1. Server
 disconnect handling owns retirement; shutdown never replays an uncertain action
 or claims that resources are already retired. Initial content waits also check
 cancellation. The SDK handshake remains bounded by five seconds and renderer
-startup by two seconds; a signal during either stage is observed when it returns.
+startup by two seconds. Renderer startup also watches the shutdown pipe; the SDK
+handshake remains bounded and checks cancellation when it returns.
 Process exit reclaims any renderer worker still inside a driver operation; this
 is not a GPU completion or device recovery guarantee.
 
