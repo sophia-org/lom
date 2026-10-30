@@ -384,7 +384,7 @@ fn the_cpu_renderer_starts_without_the_grant_the_gpu_renderer_requires() {
 #[test]
 fn each_entry_admits_only_its_resolved_renderers() {
     use crate::config::Renderer::{Cpu, CpuCopyReference as Copy, Gpu};
-    use Entry::{CpuReference as Reference, Ordinary};
+    use Entry::{CpuCadence as Cadence, CpuReference as Reference, Ordinary};
     let ordinary = "the cpu-copy-reference renderer requires lom-cpu-reference";
     let dma = "requires the owned-ring image source";
     let (mut config, _) =
@@ -405,6 +405,13 @@ fn each_entry_admits_only_its_resolved_renderers() {
         (Reference, Gpu, false, Some(Copy), Ok(Copy)),
         (Reference, Cpu, true, None, Err(dma)),
         (Reference, Copy, true, None, Err(dma)),
+        (Cadence, Gpu, false, None, Err(REFUSE_GPU_CADENCE)),
+        (Cadence, Cpu, false, Some(Gpu), Err(REFUSE_GPU_CADENCE)),
+        (Cadence, Cpu, false, None, Ok(Cpu)),
+        (Cadence, Copy, false, None, Ok(Copy)),
+        (Cadence, Gpu, false, Some(Copy), Ok(Copy)),
+        (Cadence, Cpu, true, None, Err(dma)),
+        (Cadence, Copy, true, None, Err(dma)),
     ] {
         (config.renderer, config.dma_buf) = (panel, panel_dma);
         let resolved = resolve(entry, None, renderer, &config);
@@ -425,7 +432,7 @@ fn each_entry_admits_only_its_resolved_renderers() {
 #[cfg(feature = "diagnostic-cpu-reference")]
 #[test]
 fn the_diagnostic_entry_starts_both_cpu_arms_with_exact_records() {
-    use crate::cli::cpu_reference::record;
+    use crate::cli::cpu_reference::{cadence_record, record};
     use crate::config::Renderer::{Cpu, CpuCopyReference, Gpu};
     assert!(GpuGrant::from_environment(1).is_err());
     assert_eq!(
@@ -438,15 +445,18 @@ fn the_diagnostic_entry_starts_both_cpu_arms_with_exact_records() {
     );
     let stop = std::sync::atomic::AtomicBool::new(false);
     let (wake, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
-    let start = |entry, renderer| start_renderer(entry, 1, false, renderer, &stop, wake.as_fd());
-    assert!(start(Entry::CpuReference, Cpu).unwrap().uses_ring_fill());
-    assert!(
-        !start(Entry::CpuReference, CpuCopyReference)
-            .unwrap()
-            .uses_ring_fill()
+    assert_eq!(
+        cadence_record(),
+        "lom_cadence schema=1 mode=redirty-after-presented quota=2120 diagnostic=cpu-reference"
     );
+    let start = |entry, renderer| start_renderer(entry, 1, false, renderer, &stop, wake.as_fd());
+    for entry in [Entry::CpuReference, Entry::CpuCadence] {
+        assert!(start(entry, Cpu).unwrap().uses_ring_fill());
+        assert!(!start(entry, CpuCopyReference).unwrap().uses_ring_fill());
+    }
     for (entry, renderer) in [
         (Entry::CpuReference, Gpu),
+        (Entry::CpuCadence, Gpu),
         (Entry::Ordinary, CpuCopyReference),
     ] {
         assert!(start(entry, renderer).is_err(), "{entry:?} {renderer:?}");

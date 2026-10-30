@@ -9,6 +9,9 @@ mod serve;
 mod shutdown;
 mod work_statistics;
 
+#[cfg(all(test, feature = "diagnostic-cpu-reference"))]
+pub(crate) use serve::drive_for_tests;
+
 use crate::{
     config::{PanelConfig, Renderer, Theme, parse_config, parse_theme},
     runtime,
@@ -92,6 +95,16 @@ pub fn run_cpu_reference(arguments: Vec<OsString>) -> Result<(), String> {
         return Err("lom-cpu-reference accepts exactly --serve".into());
     }
     serve::run(serve::Entry::CpuReference, None, None)
+}
+
+/// Diagnostic `lom-cpu-cadence` entry: the `lom-cpu-reference` arms, redirtied
+/// after each exact Presented to a fixed quota. It accepts exactly `--serve`.
+#[cfg(feature = "diagnostic-cpu-reference")]
+pub fn run_cpu_cadence(arguments: Vec<OsString>) -> Result<(), String> {
+    if arguments.len() != 1 || arguments[0] != "--serve" {
+        return Err("lom-cpu-cadence accepts exactly --serve".into());
+    }
+    serve::run(serve::Entry::CpuCadence, None, None)
 }
 
 fn options(arguments: &[OsString], allowed: &[&str]) -> Result<BTreeMap<String, OsString>, String> {

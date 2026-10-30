@@ -72,9 +72,13 @@ impl<R: ContentRenderer> ShellService<R> {
                     panel.allocation.pixel.width,
                     panel.allocation.pixel.height,
                 );
+                #[cfg(feature = "diagnostic-cpu-reference")]
+                self.cadence_attempt()?;
                 if self.renderer.uses_ring_fill() {
                     // The connection's single loan serves every panel.
                     if !self.start_fill(index, model.clone(), scale)? {
+                        #[cfg(feature = "diagnostic-cpu-reference")]
+                        self.cadence_deferred(true);
                         break;
                     }
                 } else {

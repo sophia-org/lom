@@ -1,5 +1,7 @@
 //! Persistent, display-independent Sophia content lifecycle.
 
+#[cfg(feature = "diagnostic-cpu-reference")]
+mod cadence;
 mod custody;
 mod image;
 mod presentation;
@@ -8,6 +10,8 @@ mod scheduler;
 mod statistics;
 mod target_generations;
 mod wait;
+#[cfg(feature = "diagnostic-cpu-reference")]
+pub(crate) use cadence::QUOTA as CADENCE_QUOTA;
 pub use image::RenderImage;
 use presentation::PendingPresentation;
 pub use statistics::WorkStatistics;
@@ -229,6 +233,8 @@ pub struct ShellService<R> {
     next_panel: usize,
     progressed: bool,
     statistics: Option<WorkStatistics>,
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    cadence: Option<cadence::Cadence>,
 }
 
 impl<R: ContentRenderer> ShellService<R> {
@@ -343,6 +349,8 @@ impl<R: ContentRenderer> ShellService<R> {
             next_panel: 0,
             progressed: false,
             statistics: None,
+            #[cfg(feature = "diagnostic-cpu-reference")]
+            cadence: None,
         };
         service.allocate_panels(allowance)?;
         Ok(service)

@@ -34,6 +34,8 @@ pub(super) struct PendingPresentation {
     presentation_epoch: u64,
     indicator_revision: u64,
     model: Model,
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    timing: super::cadence::Timing,
 }
 
 impl<R: ContentRenderer> ShellService<R> {
@@ -71,6 +73,8 @@ impl<R: ContentRenderer> ShellService<R> {
         if fill.is_some() != matches!(content.pixels, RenderImage::RingFill { .. }) {
             return Err("owned ring fill and its owner snapshot diverged".into());
         }
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        let timing = self.cadence_job();
         let pixels = &content.pixels;
         self.panels[panel].resources[slot_index] = ResourceSlot {
             id: slot.id,
@@ -108,6 +112,8 @@ impl<R: ContentRenderer> ShellService<R> {
                 .rendering_model
                 .take()
                 .ok_or("render completion lost its originating model")?,
+            #[cfg(feature = "diagnostic-cpu-reference")]
+            timing,
         });
         Ok(())
     }
@@ -169,6 +175,8 @@ impl<R: ContentRenderer> ShellService<R> {
             presentation_epoch: 0,
             indicator_revision: panel.model.workspaces.generation,
             model: panel.model.clone(),
+            #[cfg(feature = "diagnostic-cpu-reference")]
+            timing: Default::default(),
         });
         self.panels[index].interaction_dirty = false;
         self.progressed = true;
@@ -334,6 +342,8 @@ impl<R: ContentRenderer> ShellService<R> {
         };
         match offered {
             Ok(offer) => {
+                #[cfg(feature = "diagnostic-cpu-reference")]
+                self.cadence_stamp(&mut pending.timing.ring_commit_and_offer_queued)?;
                 if let Some(stats) = &mut self.statistics {
                     stats.uploads = stats.uploads.saturating_add(1);
                     stats.upload_bytes = stats.upload_bytes.saturating_add(byte_len as u64);
@@ -356,6 +366,8 @@ impl<R: ContentRenderer> ShellService<R> {
                 if matches!(error, ImageAdapterError::Busy | ImageAdapterError::Again) {
                     // A ring slot or control write is busy; the
                     // pixels wait in the pending presentation.
+                    #[cfg(feature = "diagnostic-cpu-reference")]
+                    self.cadence_deferred(false);
                     return Ok(false);
                 }
                 Err(format!("owned-ring image upload refused: {error:?}"))
@@ -562,6 +574,8 @@ impl<R: ContentRenderer> ShellService<R> {
             return Err("presented content candidate carried an invalid outcome".into());
         }
         pending.presentation_epoch = outcome.presentation_epoch;
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        self.cadence_stamp(&mut pending.timing.presented_observed)?;
         pending.phase = PresentationPhase::RetireNeeded;
         self.advance_retire_enqueue(pending)
     }
@@ -603,6 +617,8 @@ impl<R: ContentRenderer> ShellService<R> {
     }
 
     fn finish_presentation(&mut self, pending: PendingPresentation) -> Result<(), String> {
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        let cadence = (pending.panel, pending.candidate, pending.timing);
         let panel = &mut self.panels[pending.panel];
         let raster = pending.raster;
         let indicator_generation = pending.indicator_revision;
@@ -635,6 +651,8 @@ impl<R: ContentRenderer> ShellService<R> {
             targets: pending.targets,
             raster: pending.raster,
         });
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        self.cadence_presented(cadence.0, cadence.1, cadence.2)?;
         Ok(())
     }
 

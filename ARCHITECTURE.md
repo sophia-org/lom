@@ -376,6 +376,30 @@ records add `diagnostic=cpu-reference`. The feature-on ordinary `check-config`
 still parses that panel; a default build refuses the spelling. The reference
 exists to compare the two CPU arms and is never a production mode or fallback.
 
+The same feature builds `lom-cpu-cadence`, which also accepts exactly
+`--serve`. It admits and refuses renderers as `lom-cpu-reference` does, starts
+the same arms with the same renderer record, and also refuses any
+`SOPHIA_SHELL_WORK_STATS` before connecting. It requires one output panel, owns
+the work counters from zero, and prints
+`lom_cadence schema=1 mode=redirty-after-presented quota=2120 diagnostic=cpu-reference`.
+After each exact Presented of a rendered candidate it prints
+`lom_cadence_sample` after `lom_panel_candidate` and, until 2120 candidates,
+redirties the static panel. The next render still waits for the unchanged
+release and `render_ready` checks. The cadence then stops redirtying and stays
+connected until shutdown, when `lom_cadence_final` reports `status=complete`
+only for exactly 2120 rendered candidates with no reuse, extra work or work in
+flight. An extra, reused or post-quota presented candidate, or lost counters,
+ends the service with a refusal instead of a sample. Sample times are
+owner-thread CLOCK_MONOTONIC nanoseconds:
+- `eligible_render_attempt`: after `render_ready` and the model clone, before
+  the fill acquire or job submit, kept through Busy retries;
+- `ring_commit_and_offer_queued`: the upload or fill commit returned its
+  Offer;
+- `presented_observed`: the first validated exact Presented.
+
+None of these is a host receipt or pure raster time. The quota is not
+configurable, and the cadence is a diagnostic workload, never a production mode.
+
 Deadlines initiate recovery; they never authorize reuse of storage still held
 by GPU or Engine consumers. Budget reservations and terminal-response capacity
 must precede accepting obligations. Bound known allocations and retain the

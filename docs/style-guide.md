@@ -124,6 +124,11 @@ renderer-injection or signal API solely for tests. The same module checks the
 private renderer resolution and startup routing, which run before any
 connection.
 
+The cadence tests in `tests/support/service_cadence.rs` are mounted at the
+private service cadence module. They drive the real service loop, a socket peer
+and both Vello CPU workers to a small private quota through the same redirty
+logic as the fixed production quota, without exporting a quota knob for tests.
+
 Keep reducer, widget, renderer, protocol, and native tests distinct. Simulated
 widget input is not proof of Sophia input routing. GPU completion is not proof
 of desktop presentation. Record missing harnesses and unvalidated claims rather

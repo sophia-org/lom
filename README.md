@@ -172,4 +172,5 @@ service exit (`final=1`). Counters cover service turns, readiness waits and
 expirations, renders started/completed, uploads and their declared image bytes,
 and candidates reusing a resident raster. `monotonic_usec` uses CLOCK_MONOTONIC.
 The default is off, with no reporting timer. These counters describe client work;
-they do not establish CPU savings or presentation latency.
+they do not establish CPU savings or presentation latency. The diagnostic
+`lom-cpu-cadence` refuses the variable and owns these counters itself.

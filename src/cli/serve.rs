@@ -25,10 +25,15 @@ pub(super) enum Entry {
     /// `lom-cpu-reference --serve`: only the Vello CPU direct and copy arms.
     #[cfg(feature = "diagnostic-cpu-reference")]
     CpuReference,
+    /// `lom-cpu-cadence --serve`: the same arms, redirtied to a fixed quota.
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    CpuCadence,
 }
 
 #[cfg(feature = "diagnostic-cpu-reference")]
 pub(super) const REFUSE_GPU: &str = "lom-cpu-reference refuses the GPU renderer";
+#[cfg(feature = "diagnostic-cpu-reference")]
+pub(super) const REFUSE_GPU_CADENCE: &str = "lom-cpu-cadence refuses the GPU renderer";
 
 impl Entry {
     fn admit(self, renderer: Renderer) -> Result<(), String> {
@@ -39,6 +44,11 @@ impl Entry {
             ),
             #[cfg(feature = "diagnostic-cpu-reference")]
             Entry::CpuReference => (&[Renderer::Cpu, Renderer::CpuCopyReference], REFUSE_GPU),
+            #[cfg(feature = "diagnostic-cpu-reference")]
+            Entry::CpuCadence => (
+                &[Renderer::Cpu, Renderer::CpuCopyReference],
+                REFUSE_GPU_CADENCE,
+            ),
         };
         if allowed.contains(&renderer) {
             Ok(())
@@ -70,7 +80,8 @@ fn start_renderer(
     wake: BorrowedFd<'_>,
 ) -> Result<RendererWorker, String> {
     #[cfg(feature = "diagnostic-cpu-reference")]
-    if entry == Entry::CpuReference {
+    if matches!(entry, Entry::CpuReference | Entry::CpuCadence) {
+        entry.admit(renderer)?;
         return super::cpu_reference::start(renderer, stop, wake);
     }
     entry.admit(renderer)?;
@@ -141,6 +152,11 @@ fn serve<R: ContentRenderer>(
         .map_err(|error| format!("{}:{error}", Path::new(&config_path).display()))?;
     validate_theme(&config, &theme)?;
     let (dma, renderer) = resolve(entry, dma, renderer, &config)?;
+    // The cadence owns the work counters from zero; its samples replace them.
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    if entry == Entry::CpuCadence && std::env::var_os("SOPHIA_SHELL_WORK_STATS").is_some() {
+        return Err("lom-cpu-cadence refuses SOPHIA_SHELL_WORK_STATS".into());
+    }
     let allowance = std::env::var("SOPHIA_SHELL_BAR_THICKNESS")
         .map_err(|_| "SOPHIA_SHELL_BAR_THICKNESS is required for --serve")?
         .parse::<u32>()
@@ -196,19 +212,56 @@ fn serve<R: ContentRenderer>(
         ),
         endpoint_dir,
     )?;
-    let mut reporter = super::work_statistics::Reporter::new(&mut service);
+    drive(entry, &mut service, |_| stop.requested())
+}
+
+/// The owner loop. The reporter comes first: it disables counters when unset,
+/// which the cadence must then find disabled and enable from zero.
+fn drive<R: ContentRenderer>(
+    entry: Entry,
+    service: &mut ShellService<R>,
+    stop: impl Fn(&ShellService<R>) -> bool,
+) -> Result<(), String> {
+    let mut reporter = super::work_statistics::Reporter::new(service);
+    #[cfg(not(feature = "diagnostic-cpu-reference"))]
+    let _ = entry;
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    if entry == Entry::CpuCadence {
+        service.enable_diagnostic_cadence()?;
+        println!("{}", super::cpu_reference::cadence_record());
+    }
     let result = (|| {
-        while !stop.requested() {
+        while !stop(service) {
             let presented = service.step()?;
-            reporter.emit(&service, false)?;
+            reporter.emit(service, false)?;
             if presented == 0 {
                 service.wait_for_work_until(reporter.deadline())?;
             }
         }
         Ok(())
     })();
-    reporter.emit(&service, true)?;
+    reporter.emit(service, true)?;
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    if let Some(record) = service.cadence_final() {
+        println!("{record}");
+    }
     result
+}
+
+/// The production owner loop for the service cadence tests, which own the
+/// socket peer; the diagnostic entry is `cadence` or the plain reference.
+#[cfg(all(test, feature = "diagnostic-cpu-reference"))]
+pub(crate) fn drive_for_tests<R: ContentRenderer>(
+    cadence: bool,
+    service: &mut ShellService<R>,
+    stop: impl Fn(&ShellService<R>) -> bool,
+) -> Result<(), String> {
+    let entry = if cadence {
+        Entry::CpuCadence
+    } else {
+        Entry::CpuReference
+    };
+    drive(entry, service, stop)
 }
 
 #[cfg(test)]

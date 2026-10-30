@@ -7,6 +7,8 @@ static PANEL: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(feature = "diagnostic-cpu-reference")]
 const REFERENCE: &str = env!("CARGO_BIN_EXE_lom-cpu-reference");
+#[cfg(feature = "diagnostic-cpu-reference")]
+const CADENCE: &str = env!("CARGO_BIN_EXE_lom-cpu-cadence");
 
 fn run(arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_lom"))
@@ -306,23 +308,31 @@ fn production_help_and_renderer_spellings_are_unchanged() {
 
 #[cfg(feature = "diagnostic-cpu-reference")]
 #[test]
-fn the_cpu_reference_binary_accepts_exactly_serve() {
-    for arguments in [
-        &[][..],
-        &["--help"],
-        &["--version"],
-        &["--serve", "--serve"],
-        &["--serve", "--renderer", "cpu"],
-        &["--serve", "--image-source", "owned-ring"],
-        &[
-            "check-config",
-            "--config",
-            "panel.kdl",
-            "--theme",
-            "theme.kdl",
-        ],
-    ] {
-        let result = Command::new(REFERENCE)
+fn the_diagnostic_binaries_accept_exactly_serve() {
+    for (binary, refusal, arguments) in [
+        (REFERENCE, "lom-cpu-reference"),
+        (CADENCE, "lom-cpu-cadence"),
+    ]
+    .into_iter()
+    .flat_map(|(binary, name)| {
+        [
+            &[][..],
+            &["--help"],
+            &["--version"],
+            &["--serve", "--serve"],
+            &["--serve", "--renderer", "cpu"],
+            &["--serve", "--image-source", "owned-ring"],
+            &[
+                "check-config",
+                "--config",
+                "panel.kdl",
+                "--theme",
+                "theme.kdl",
+            ],
+        ]
+        .map(move |arguments| (binary, name, arguments))
+    }) {
+        let result = Command::new(binary)
             .args(arguments)
             .env_clear()
             .output()
@@ -331,7 +341,7 @@ fn the_cpu_reference_binary_accepts_exactly_serve() {
         assert!(result.stdout.is_empty());
         let stderr = String::from_utf8(result.stderr).unwrap();
         assert!(
-            stderr.contains("lom-cpu-reference accepts exactly --serve"),
+            stderr.contains(&format!("{refusal} accepts exactly --serve")),
             "{arguments:?}: {stderr}"
         );
     }
@@ -341,6 +351,10 @@ fn the_cpu_reference_binary_accepts_exactly_serve() {
 const ORDINARY_REFUSAL: &str = "the cpu-copy-reference renderer requires lom-cpu-reference";
 #[cfg(feature = "diagnostic-cpu-reference")]
 const GPU_REFUSAL: &str = "lom-cpu-reference refuses the GPU renderer";
+#[cfg(feature = "diagnostic-cpu-reference")]
+const CADENCE_GPU_REFUSAL: &str = "lom-cpu-cadence refuses the GPU renderer";
+#[cfg(feature = "diagnostic-cpu-reference")]
+const WORK_STATS_REFUSAL: &str = "lom-cpu-cadence refuses SOPHIA_SHELL_WORK_STATS";
 #[cfg(feature = "diagnostic-cpu-reference")]
 const DMA_REFUSAL: &str = "the CPU renderer requires the owned-ring image source";
 #[cfg(feature = "diagnostic-cpu-reference")]
@@ -366,6 +380,12 @@ fn entry_selection_is_refused_before_the_allowance() {
         (REFERENCE, COPY, &[], passed),
         (REFERENCE, cpu_dma, &[], DMA_REFUSAL),
         (REFERENCE, copy_dma, &[], DMA_REFUSAL),
+        (CADENCE, "", &[], CADENCE_GPU_REFUSAL),
+        (CADENCE, "renderer \"gpu\"", &[], CADENCE_GPU_REFUSAL),
+        (CADENCE, "renderer \"cpu\"", &[], passed),
+        (CADENCE, COPY, &[], passed),
+        (CADENCE, cpu_dma, &[], DMA_REFUSAL),
+        (CADENCE, copy_dma, &[], DMA_REFUSAL),
     ] {
         let result = serve_binary_with_panel(binary, settings, arguments);
         let stderr = String::from_utf8(result.stderr).unwrap();
@@ -398,11 +418,16 @@ fn a_refused_entry_selection_never_connects() {
     let socket = directory.join("shell.sock");
     let listener = UnixListener::bind(&socket).unwrap();
     listener.set_nonblocking(true).unwrap();
-    let serve = |binary: &str, settings: &str| {
+    let serve = |binary: &str, settings: &str, work_stats: bool| {
         let config = panel_config(settings);
-        let child = Command::new(binary)
+        let mut command = Command::new(binary);
+        command.env_clear();
+        if work_stats {
+            // Any value is refused, even one that would disable the counters.
+            command.env("SOPHIA_SHELL_WORK_STATS", "0");
+        }
+        let child = command
             .arg("--serve")
-            .env_clear()
             .env("SOPHIA_SHELL_9P_SOCKET", &socket)
             .env("SOPHIA_SHELL_CONFIG", &config)
             .env("SOPHIA_SHELL_BAR_THICKNESS", "24")
@@ -413,12 +438,15 @@ fn a_refused_entry_selection_never_connects() {
         (child, config)
     };
     let cpu_dma = "renderer \"cpu\"\n image-source \"dma-buf\"";
-    for (binary, settings, refusal) in [
-        (env!("CARGO_BIN_EXE_lom"), COPY, ORDINARY_REFUSAL),
-        (REFERENCE, "renderer \"gpu\"", GPU_REFUSAL),
-        (REFERENCE, cpu_dma, DMA_REFUSAL),
+    for (binary, settings, work_stats, refusal) in [
+        (env!("CARGO_BIN_EXE_lom"), COPY, false, ORDINARY_REFUSAL),
+        (REFERENCE, "renderer \"gpu\"", false, GPU_REFUSAL),
+        (REFERENCE, cpu_dma, false, DMA_REFUSAL),
+        (CADENCE, "renderer \"gpu\"", false, CADENCE_GPU_REFUSAL),
+        (CADENCE, cpu_dma, false, DMA_REFUSAL),
+        (CADENCE, COPY, true, WORK_STATS_REFUSAL),
     ] {
-        let (child, config) = serve(binary, settings);
+        let (child, config) = serve(binary, settings, work_stats);
         let result = child.wait_with_output().unwrap();
         std::fs::remove_file(config).unwrap();
         assert_eq!(result.status.code(), Some(2), "{settings}");
@@ -427,7 +455,7 @@ fn a_refused_entry_selection_never_connects() {
         let error = listener.accept().unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock, "{settings}");
     }
-    let (child, config) = serve(REFERENCE, COPY);
+    let (child, config) = serve(REFERENCE, COPY, false);
     let deadline = Instant::now() + Duration::from_secs(10);
     let stream = loop {
         match listener.accept() {

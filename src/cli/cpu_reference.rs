@@ -17,6 +17,14 @@ pub(super) fn record(renderer: Renderer) -> Result<&'static str, String> {
     }
 }
 
+/// Exact `lom-cpu-cadence` startup record, after the renderer record.
+pub(super) fn cadence_record() -> String {
+    format!(
+        "lom_cadence schema=1 mode=redirty-after-presented quota={} diagnostic=cpu-reference",
+        crate::service::CADENCE_QUOTA
+    )
+}
+
 /// Start the resolved arm; neither reads a GPU grant.
 pub(super) fn start(
     renderer: Renderer,

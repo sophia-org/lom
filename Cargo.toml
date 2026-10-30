@@ -16,13 +16,19 @@ resolver = "3"
 missing_docs = "warn"
 
 [features]
-# Diagnostic only: builds `lom-cpu-reference` and its Vello CPU copy reference.
+# Diagnostic only: builds `lom-cpu-reference`, its Vello CPU copy reference and
+# the `lom-cpu-cadence` quota driver.
 # Off by default; the ordinary `lom` binary refuses that renderer even when on.
 diagnostic-cpu-reference = []
 
 [[bin]]
 name = "lom-cpu-reference"
 path = "src/bin/lom-cpu-reference.rs"
+required-features = ["diagnostic-cpu-reference"]
+
+[[bin]]
+name = "lom-cpu-cadence"
+path = "src/bin/lom-cpu-cadence.rs"
 required-features = ["diagnostic-cpu-reference"]
 
 [dependencies]
