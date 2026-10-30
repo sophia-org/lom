@@ -120,7 +120,9 @@ They use only private socket pairs, with no display or GPU access.
 The shutdown tests in `tests/support/shutdown.rs` are mounted at the private
 CLI serve boundary. They exercise the production signal handlers and service
 with a GPU-free renderer in a separate sandbox PID 1, without exporting a
-renderer-injection or signal API solely for tests.
+renderer-injection or signal API solely for tests. The same module checks the
+private renderer resolution and startup routing, which run before any
+connection.
 
 Keep reducer, widget, renderer, protocol, and native tests distinct. Simulated
 widget input is not proof of Sophia input routing. GPU completion is not proof

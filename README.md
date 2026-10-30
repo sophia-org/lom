@@ -80,6 +80,12 @@ and currently one output/device; an unavailable grant fails startup. It does
 not silently fall back. Native export and EGL import controls have passed;
 full Session presentation and performance qualification are still pending.
 
+The default renderer is the GPU. Put `renderer "cpu"` inside the `panel` node to
+select Vello CPU rendering into owned-ring slots without a GPU grant; it is an
+explicit choice, never a fallback, and refuses the `dma-buf` image source. An
+explicit `--renderer gpu|cpu` argument overrides the config. Native CPU
+presentation and performance are not yet qualified.
+
 `--serve` is a supervisor entry point, not a command to run from an ordinary
 terminal. It requires `SOPHIA_SHELL_9P_SOCKET`, `SOPHIA_SHELL_CONFIG` and
 `SOPHIA_SHELL_BAR_THICKNESS`, negotiates revision 6, allocates one panel per

@@ -29,6 +29,16 @@ pub fn parse_shell_config(source: &str) -> Result<(PanelConfig, Theme), ConfigEr
     ))
 }
 
+/// Explicitly selected panel renderer. GPU is the default; neither falls back
+/// to the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Renderer {
+    /// Vello on the admitted GPU.
+    Gpu,
+    /// Vello CPU into owned-ring slots, without a GPU grant.
+    Cpu,
+}
+
 /// Position of the desired panel; placement remains Engine-owned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Position {
@@ -133,6 +143,8 @@ pub struct ModuleConfig {
 pub struct PanelConfig {
     /// Explicit GPU image transport opt-in; false keeps the owned ring.
     pub dma_buf: bool,
+    /// Explicit renderer; an argument may override it.
+    pub renderer: Renderer,
     /// Configured identity.
     pub name: String,
     /// Desired edge.

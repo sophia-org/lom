@@ -196,8 +196,64 @@ fn cpu_rendering_refuses_the_dma_buf_source_instead_of_falling_back() {
     assert!(
         String::from_utf8(result.stderr)
             .unwrap()
-            .contains("--renderer cpu requires the owned-ring image source")
+            .contains("the CPU renderer requires the owned-ring image source")
     );
+}
+
+/// Serve with the minimal configuration plus `settings` in its panel, stopping
+/// before any connection: no socket server or allowance is supplied.
+fn serve_with_panel(settings: &str, arguments: &[&str]) -> Output {
+    let source = include_str!("../examples/minimal/shell.kdl").replace(
+        "panel \"main\" {",
+        &format!("panel \"main\" {{\n {settings}"),
+    );
+    let path = std::env::temp_dir().join(format!(
+        "lom-cli-renderer-{}-{}.kdl",
+        std::process::id(),
+        arguments.join("_").replace('-', "")
+    ));
+    std::fs::write(&path, source).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_lom"))
+        .arg("--serve")
+        .args(arguments)
+        .env_clear()
+        .env("SOPHIA_SHELL_9P_SOCKET", "/nonexistent/lom.sock")
+        .env("SOPHIA_SHELL_CONFIG", &path)
+        .output()
+        .unwrap();
+    std::fs::remove_file(path).unwrap();
+    result
+}
+
+#[test]
+fn the_panel_renderer_is_selected_by_config_and_overridden_by_arguments() {
+    // Passing resolution reaches the next supervisor input; a CPU and DMA-BUF
+    // selection stops first. Which one occurs proves the resolved renderer.
+    let passed = "SOPHIA_SHELL_BAR_THICKNESS is required";
+    let refused = "the CPU renderer requires the owned-ring image source";
+    let both = "renderer \"cpu\"\n image-source \"dma-buf\"";
+    for (settings, arguments, expected) in [
+        ("renderer \"cpu\"", &[][..], passed),
+        (both, &[], refused),
+        (both, &["--renderer", "gpu"], passed),
+        (both, &["--image-source", "owned-ring"], passed),
+        (
+            "renderer \"gpu\"",
+            &["--renderer", "cpu", "--image-source", "dma-buf"],
+            refused,
+        ),
+        ("image-source \"dma-buf\"", &[], passed),
+        ("image-source \"dma-buf\"", &["--renderer", "cpu"], refused),
+    ] {
+        let result = serve_with_panel(settings, arguments);
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert_eq!(result.status.code(), Some(2), "{settings} {arguments:?}");
+        assert!(result.stdout.is_empty(), "no renderer or transport started");
+        assert!(
+            stderr.contains(expected),
+            "{settings} {arguments:?}: {stderr}"
+        );
+    }
 }
 
 #[test]

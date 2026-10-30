@@ -8,7 +8,7 @@ mod shutdown;
 mod work_statistics;
 
 use crate::{
-    config::{PanelConfig, Theme, parse_config, parse_theme},
+    config::{PanelConfig, Renderer, Theme, parse_config, parse_theme},
     runtime,
 };
 use std::{
@@ -18,7 +18,7 @@ use std::{
 };
 
 /// Help displayed without loading configuration, fonts or a GPU.
-pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n       lom content-proof --socket FILE\n       lom --serve [--image-source owned-ring|dma-buf] [--renderer gpu|cpu]\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\ncontent-proof exercises fixed diagnostic pixels over an explicitly admitted Sophia 9P socket; it does not present a panel.\n--serve is the persistent protected Sophia content-shell entry point. --renderer cpu explicitly selects Vello CPU rendering into owned-ring slots without a GPU grant; it is never a fallback.\n";
+pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n       lom content-proof --socket FILE\n       lom --serve [--image-source owned-ring|dma-buf] [--renderer gpu|cpu]\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\ncontent-proof exercises fixed diagnostic pixels over an explicitly admitted Sophia 9P socket; it does not present a panel.\n--serve is the persistent protected Sophia content-shell entry point. The panel's renderer setting, or an overriding --renderer, selects gpu (default) or cpu; cpu renders with Vello CPU into owned-ring slots without a GPU grant and is never a fallback.\n";
 
 /// Run one diagnostic command; the caller prints any returned boundary failure.
 pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
@@ -58,13 +58,13 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
             Some(value) if value == "dma-buf" => Some(true),
             _ => return Err("--image-source must be owned-ring or dma-buf".into()),
         };
-        let cpu = match options.get("--renderer") {
-            None => false,
-            Some(value) if value == "gpu" => false,
-            Some(value) if value == "cpu" => true,
+        let renderer = match options.get("--renderer") {
+            None => None,
+            Some(value) if value == "gpu" => Some(Renderer::Gpu),
+            Some(value) if value == "cpu" => Some(Renderer::Cpu),
             _ => return Err("--renderer must be gpu or cpu".into()),
         };
-        return serve::run(dma, cpu);
+        return serve::run(dma, renderer);
     }
     let (config, theme) = load(
         &required(&options, "--config")?,

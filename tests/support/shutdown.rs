@@ -49,7 +49,7 @@ impl ContentRenderer for Renderer {
 fn shutdown_child() {
     let root = PathBuf::from(std::env::var_os("LOM_SHUTDOWN_TEST").expect("parent fixture"));
     assert_eq!(std::process::id(), 1);
-    run_with_renderer(None, false, |_, _, _| {
+    run_with_renderer(None, None, |_, _, _, _| {
         fs::write(root.join("renderer"), "yes").unwrap();
         Ok(Renderer(root.clone()))
     })
@@ -320,4 +320,59 @@ fn stop_during_rendering(signal: &str, name: &str) {
     assert!(stop(&mut process, signal) < Duration::from_secs(2));
     assert!(process.root.join("dropped").exists());
     drop(peer);
+}
+
+/// Renderer selection: the panel setting, its argument overrides, and the
+/// CPU and DMA-BUF refusal, decided before any connection or renderer.
+#[test]
+fn an_explicit_argument_overrides_the_panel_renderer_and_image_source() {
+    use crate::config::Renderer::{Cpu, Gpu};
+    let (mut config, _) =
+        crate::config::parse_shell_config(include_str!("../../examples/minimal/shell.kdl"))
+            .unwrap();
+    for (panel, panel_dma, renderer, dma, expected) in [
+        (Gpu, false, None, None, Some((false, Gpu))),
+        (Cpu, false, None, None, Some((false, Cpu))),
+        (Cpu, false, Some(Gpu), None, Some((false, Gpu))),
+        (Gpu, false, Some(Cpu), None, Some((false, Cpu))),
+        (Gpu, true, None, None, Some((true, Gpu))),
+        (Cpu, true, None, None, None),
+        (Cpu, true, Some(Gpu), None, Some((true, Gpu))),
+        (Cpu, true, None, Some(false), Some((false, Cpu))),
+        (Gpu, false, Some(Cpu), Some(true), None),
+    ] {
+        (config.renderer, config.dma_buf) = (panel, panel_dma);
+        let resolved = resolve(dma, renderer, &config);
+        assert_eq!(
+            resolved.as_ref().ok(),
+            expected.as_ref(),
+            "{panel:?} {panel_dma} {renderer:?} {dma:?}: {resolved:?}"
+        );
+        if expected.is_none() {
+            assert!(
+                resolved
+                    .unwrap_err()
+                    .contains("requires the owned-ring image source")
+            );
+        }
+    }
+}
+
+/// The resolved CPU renderer starts without the GPU grant the GPU renderer
+/// requires in the same environment.
+#[test]
+fn the_cpu_renderer_starts_without_the_grant_the_gpu_renderer_requires() {
+    use crate::config::Renderer::{Cpu, Gpu};
+    assert!(
+        GpuGrant::from_environment(1).is_err(),
+        "this control needs an environment without a GPU grant"
+    );
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let (wake, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    let worker = start_renderer(1, false, Cpu, &stop, wake.as_fd()).unwrap();
+    assert!(
+        worker.uses_ring_fill(),
+        "the CPU worker fills owned ring slots"
+    );
+    assert!(start_renderer(1, false, Gpu, &stop, wake.as_fd()).is_err());
 }

@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use kdl::{KdlDocument, KdlNode, KdlValue};
 
-use super::{ModuleConfig, ModuleKind, PanelConfig, Position, Region};
+use super::{ModuleConfig, ModuleKind, PanelConfig, Position, Region, Renderer};
 
 /// Configuration error with one-based source position.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,6 +137,7 @@ pub(crate) fn parse_panel(source: &str, node: &KdlNode) -> Result<PanelConfig, C
         .to_owned();
     let mut panel = PanelConfig {
         dma_buf: false,
+        renderer: Renderer::Gpu,
         name,
         position: Position::Bottom,
         height: 42,
@@ -154,6 +155,13 @@ pub(crate) fn parse_panel(source: &str, node: &KdlNode) -> Result<PanelConfig, C
                     "owned-ring" => false,
                     "dma-buf" => true,
                     _ => return Err(error(source, child, "expected owned-ring or dma-buf")),
+                };
+            }
+            "renderer" => {
+                panel.renderer = match string(source, child)?.as_str() {
+                    "gpu" => Renderer::Gpu,
+                    "cpu" => Renderer::Cpu,
+                    _ => return Err(error(source, child, "expected gpu or cpu")),
                 };
             }
             "position" => {

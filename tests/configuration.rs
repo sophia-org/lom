@@ -173,6 +173,32 @@ fn production_shell_document_keeps_panel_and_theme_in_one_mount() {
 }
 
 #[test]
+fn protected_renderer_is_explicit_and_defaults_to_gpu() {
+    use lom::config::Renderer;
+    let source = include_str!("../examples/minimal/shell.kdl");
+    let renderer = |source: &str| lom::config::parse_shell_config(source).map(|c| c.0.renderer);
+    assert_eq!(renderer(source).unwrap(), Renderer::Gpu);
+    for (value, expected) in [("gpu", Renderer::Gpu), ("cpu", Renderer::Cpu)] {
+        let configured = source.replace(
+            "panel \"main\" {",
+            &format!("panel \"main\" {{\n renderer \"{value}\""),
+        );
+        assert_eq!(renderer(&configured).unwrap(), expected);
+    }
+    for setting in [
+        "renderer \"automatic\"",
+        "renderer \"cpu\"; renderer \"gpu\"",
+        "renderer 1",
+    ] {
+        let configured = source.replace(
+            "panel \"main\" {",
+            &format!("panel \"main\" {{\n {setting}"),
+        );
+        assert!(renderer(&configured).is_err(), "{setting}");
+    }
+}
+
+#[test]
 fn protected_image_source_is_explicit_and_defaults_to_the_owned_ring() {
     let source = include_str!("../examples/minimal/shell.kdl");
     assert!(!lom::config::parse_shell_config(source).unwrap().0.dma_buf);

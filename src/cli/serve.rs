@@ -1,7 +1,7 @@
 //! Protected production entry point; protocol ownership lives in `service`.
 
 use crate::{
-    config::parse_shell_config,
+    config::{PanelConfig, Renderer, parse_shell_config},
     render::{GpuGrant, RendererWorker},
     runtime::validate_theme,
     service::{ContentRenderer, ShellService},
@@ -12,36 +12,59 @@ use sophia_shell_protocol::{
     SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER, SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION,
     SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS,
 };
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, BorrowedFd};
+use std::sync::atomic::AtomicBool;
 use std::{path::Path, time::Duration};
 
-pub(super) fn run(dma: Option<bool>, cpu: bool) -> Result<(), String> {
-    run_with_renderer(dma, cpu, |epoch, dma, stop| {
-        if cpu {
-            // Explicit CPU mode reads no GPU grant and never falls back to GPU.
-            // The record states the source-selected renderer, not admission:
-            // an inherited grant may exist but is not used.
-            let renderer = RendererWorker::start_cpu_until_stopped(&stop.flag, stop.wake.as_fd())?;
-            println!(
-                "lom_renderer schema=1 renderer=vello-cpu source=owned-ring-fill gpu=not-used"
-            );
-            return Ok(renderer);
-        }
-        let grant = GpuGrant::from_environment(epoch)?;
-        let (renderer, admission) =
-            RendererWorker::start_until_stopped(grant, dma, &stop.flag, stop.wake.as_fd())?;
-        println!("{}", admission.record("lom")?);
-        Ok(renderer)
+pub(super) fn run(dma: Option<bool>, renderer: Option<Renderer>) -> Result<(), String> {
+    run_with_renderer(dma, renderer, |epoch, dma, renderer, stop| {
+        start_renderer(epoch, dma, renderer, &stop.flag, stop.wake.as_fd())
     })
+}
+
+/// Start the resolved renderer. CPU reads no GPU grant and never falls back to
+/// GPU; its record states the source-selected renderer, not admission: an
+/// inherited grant may exist but is not used.
+fn start_renderer(
+    epoch: u64,
+    dma: bool,
+    renderer: Renderer,
+    stop: &AtomicBool,
+    wake: BorrowedFd<'_>,
+) -> Result<RendererWorker, String> {
+    if renderer == Renderer::Cpu {
+        let worker = RendererWorker::start_cpu_until_stopped(stop, wake)?;
+        println!("lom_renderer schema=1 renderer=vello-cpu source=owned-ring-fill gpu=not-used");
+        return Ok(worker);
+    }
+    let grant = GpuGrant::from_environment(epoch)?;
+    let (worker, admission) = RendererWorker::start_until_stopped(grant, dma, stop, wake)?;
+    println!("{}", admission.record("lom")?);
+    Ok(worker)
+}
+
+/// An explicit argument overrides the protected panel's setting. CPU never
+/// pairs with DMA-BUF, so that combination fails instead of falling back.
+fn resolve(
+    dma: Option<bool>,
+    renderer: Option<Renderer>,
+    config: &PanelConfig,
+) -> Result<(bool, Renderer), String> {
+    let dma = dma.unwrap_or(config.dma_buf);
+    let renderer = renderer.unwrap_or(config.renderer);
+    if renderer == Renderer::Cpu && dma {
+        return Err("the CPU renderer requires the owned-ring image source, not dma-buf".into());
+    }
+    Ok((dma, renderer))
 }
 
 fn run_with_renderer<R: ContentRenderer>(
     dma: Option<bool>,
-    cpu: bool,
-    renderer: impl FnOnce(u64, bool, &super::shutdown::Shutdown) -> Result<R, String>,
+    renderer: Option<Renderer>,
+    start: impl FnOnce(u64, bool, Renderer, &super::shutdown::Shutdown) -> Result<R, String>,
 ) -> Result<(), String> {
     let stop = super::shutdown::Shutdown::install()?;
-    let result = serve(&stop, dma, cpu, renderer);
+    let result = serve(&stop, dma, renderer, start);
     if stop.requested() {
         // Dropping the connection revokes this owner's content and leaves any
         // ambiguous submission with its original owner; nothing is replayed.
@@ -55,8 +78,8 @@ fn run_with_renderer<R: ContentRenderer>(
 fn serve<R: ContentRenderer>(
     stop: &super::shutdown::Shutdown,
     dma: Option<bool>,
-    cpu: bool,
-    renderer: impl FnOnce(u64, bool, &super::shutdown::Shutdown) -> Result<R, String>,
+    renderer: Option<Renderer>,
+    start: impl FnOnce(u64, bool, Renderer, &super::shutdown::Shutdown) -> Result<R, String>,
 ) -> Result<(), String> {
     if std::env::var_os("SOPHIA_SHELL_SOCKET").is_some() {
         return Err("SOPHIA_SHELL_SOCKET is unsupported; use SOPHIA_SHELL_9P_SOCKET".into());
@@ -70,10 +93,7 @@ fn serve<R: ContentRenderer>(
     let (config, theme) = parse_shell_config(&source)
         .map_err(|error| format!("{}:{error}", Path::new(&config_path).display()))?;
     validate_theme(&config, &theme)?;
-    let dma = dma.unwrap_or(config.dma_buf);
-    if cpu && dma {
-        return Err("--renderer cpu requires the owned-ring image source, not dma-buf".into());
-    }
+    let (dma, renderer) = resolve(dma, renderer, &config)?;
     let allowance = std::env::var("SOPHIA_SHELL_BAR_THICKNESS")
         .map_err(|_| "SOPHIA_SHELL_BAR_THICKNESS is required for --serve")?
         .parse::<u32>()
@@ -115,7 +135,7 @@ fn serve<R: ContentRenderer>(
         connection.welcome().selected_revision,
         connection.connection_epoch()
     );
-    let renderer = renderer(connection.connection_epoch(), dma, stop)?;
+    let renderer = start(connection.connection_epoch(), dma, renderer, stop)?;
     stop.check()?;
     let mut service = ShellService::new_until_stopped(
         connection,
