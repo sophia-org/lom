@@ -1,4 +1,4 @@
-//! Owned CPU wire pixels produced by GPU readback, not a CPU raster fallback.
+//! Owned CPU wire pixels from GPU readback or the explicit CPU renderer, never a fallback.
 
 /// One immutable r5 resource. No padding, compression or hidden delta base.
 #[derive(Debug, Eq, PartialEq)]
@@ -51,14 +51,7 @@ impl ContentPixels {
         if bytes.len() != Self::byte_len(width, height)? {
             return Err("RGBA readback length does not equal width * height * 4".into());
         }
-        for pixel in bytes.chunks_exact_mut(4) {
-            let alpha = u16::from(pixel[3]);
-            let premultiply = |channel: u8| ((u16::from(channel) * alpha + 127) / 255) as u8;
-            let red = premultiply(pixel[0]);
-            pixel[0] = premultiply(pixel[2]);
-            pixel[1] = premultiply(pixel[1]);
-            pixel[2] = red;
-        }
+        rgba8_to_premultiplied_bgra(&mut bytes);
         Ok(Self {
             width,
             height,
@@ -95,6 +88,19 @@ impl ContentPixels {
             offset: 0,
             ordinal: 0,
         })
+    }
+}
+
+/// The single straight-RGBA8 to premultiplied-BGRA8 conversion, shared by
+/// readback pixels and CPU fills written directly into an owned ring slot.
+pub(crate) fn rgba8_to_premultiplied_bgra(bytes: &mut [u8]) {
+    for pixel in bytes.chunks_exact_mut(4) {
+        let alpha = u16::from(pixel[3]);
+        let premultiply = |channel: u8| ((u16::from(channel) * alpha + 127) / 255) as u8;
+        let red = premultiply(pixel[0]);
+        pixel[0] = premultiply(pixel[2]);
+        pixel[1] = premultiply(pixel[1]);
+        pixel[2] = red;
     }
 }
 

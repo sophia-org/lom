@@ -25,15 +25,18 @@ xilem_masonry = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a63
 masonry = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849def6eeab282561439b963862e5", default-features = false }
 tokio = { version = "1.50", features = ["rt", "sync"] }
 wgpu = { version = "28.0", default-features = false, features = ["vulkan", "wgsl", "std", "parking_lot"] }
+imaging_vello_cpu = "0.0.1"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-sophia-shell-protocol = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "0706ea2c78cd16ba59ed209620354f30a2c78906" }
-sophia-shell-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "0706ea2c78cd16ba59ed209620354f30a2c78906" }
-sophia-launch-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "0706ea2c78cd16ba59ed209620354f30a2c78906" }
-sophia-9p-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "0706ea2c78cd16ba59ed209620354f30a2c78906" }
-sophia-image-producer = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "0706ea2c78cd16ba59ed209620354f30a2c78906" }
+# Local development exception: owned ring fills (code 5d895652, parity docs
+# 99b05e34) exist only in a local SDK checkout. Not a packaging or upstream
+# reachability claim; restore a published revision before release.
+sophia-shell-protocol = { git = "file:///home/niltempus/dev/sdk-rs-cpu-owned-fill", rev = "99b05e345be34678128733bf0166ded85b06239a" }
+sophia-shell-client = { git = "file:///home/niltempus/dev/sdk-rs-cpu-owned-fill", rev = "99b05e345be34678128733bf0166ded85b06239a" }
+sophia-launch-client = { git = "file:///home/niltempus/dev/sdk-rs-cpu-owned-fill", rev = "99b05e345be34678128733bf0166ded85b06239a" }
+sophia-9p-client = { git = "file:///home/niltempus/dev/sdk-rs-cpu-owned-fill", rev = "99b05e345be34678128733bf0166ded85b06239a" }
+sophia-image-producer = { git = "file:///home/niltempus/dev/sdk-rs-cpu-owned-fill", rev = "99b05e345be34678128733bf0166ded85b06239a" }
 
 [dev-dependencies]
-imaging_vello_cpu = "0.0.1"
 masonry_testing = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849def6eeab282561439b963862e5", default-features = false }
 
 

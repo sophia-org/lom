@@ -41,10 +41,15 @@ class DependencyBoundary(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(name, result.stderr)
 
-    def test_software_test_renderers_cannot_become_runtime_dependencies(self):
-        for name in ["masonry_testing", "imaging_vello_cpu", "vello_cpu"]:
-            with self.subTest(name=name):
-                self.assertEqual(self.audit(f"{name} v1.0.0").returncode, 1)
+    def test_explicit_vello_cpu_renderer_is_allowed(self):
+        result = self.audit("lom v0.1.0\nimaging_vello_cpu v0.0.1\nvello_cpu v0.0.7")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_masonry_test_harness_cannot_become_a_runtime_dependency(self):
+        result = self.audit("lom v0.1.0\nimaging_vello_cpu v0.0.1\nmasonry_testing v1.0.0")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("masonry_testing", result.stderr)
+        self.assertNotIn("vello_cpu", result.stderr)
 
     def test_ipc_and_sophia_server_crates_are_rejected(self):
         for name in ["sophia-shell-ipc", "sophia-protocol", "sophia-runtime",

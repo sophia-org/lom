@@ -7,6 +7,20 @@ pub enum RenderImage {
     Cpu(ContentPixels),
     /// Producer-completed GPU storage, retained through SourceReleased.
     Dma(sophia_shell_gpu::DmaFrame),
+    /// Premultiplied BGRA rendered directly into an owner-acquired ring loan.
+    /// The owner rechecks `identity` before committing or aborting the loan.
+    RingFill {
+        /// The exact payload loan; dropping it live faults the ring.
+        fill: sophia_shell_client::OwnedRingSlotFill,
+        /// Allocation identity the job was rendered for.
+        identity: super::RenderIdentity,
+        /// Rendered pixel width.
+        width: u32,
+        /// Rendered pixel height.
+        height: u32,
+        /// Checksum of the converted wire bytes.
+        checksum: u64,
+    },
 }
 
 impl std::fmt::Debug for RenderImage {
@@ -17,6 +31,17 @@ impl std::fmt::Debug for RenderImage {
                 .debug_struct("Dma")
                 .field("width", &frame.width())
                 .field("height", &frame.height())
+                .finish(),
+            Self::RingFill {
+                identity,
+                width,
+                height,
+                ..
+            } => f
+                .debug_struct("RingFill")
+                .field("identity", identity)
+                .field("width", width)
+                .field("height", height)
                 .finish(),
         }
     }
@@ -34,6 +59,7 @@ impl RenderImage {
         match self {
             Self::Cpu(pixels) => pixels.width(),
             Self::Dma(frame) => frame.width(),
+            Self::RingFill { width, .. } => *width,
         }
     }
 
@@ -42,6 +68,7 @@ impl RenderImage {
         match self {
             Self::Cpu(pixels) => pixels.height(),
             Self::Dma(frame) => frame.height(),
+            Self::RingFill { height, .. } => *height,
         }
     }
 
@@ -53,6 +80,7 @@ impl RenderImage {
         match self {
             Self::Cpu(pixels) => Some(super::pixel_checksum(pixels.bytes())),
             Self::Dma(_) => None,
+            Self::RingFill { checksum, .. } => Some(*checksum),
         }
     }
 }

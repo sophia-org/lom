@@ -167,3 +167,52 @@ fn missing_duplicate_and_malformed_config_options_fail_closed() {
         assert_eq!(run(arguments).status.code(), Some(2));
     }
 }
+
+#[test]
+fn invalid_renderer_fails_before_service_startup() {
+    let result = run(&["--serve", "--renderer", "automatic"]);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(
+        String::from_utf8(result.stderr)
+            .unwrap()
+            .contains("--renderer must be gpu or cpu")
+    );
+}
+
+#[test]
+fn cpu_rendering_refuses_the_dma_buf_source_instead_of_falling_back() {
+    let result = Command::new(env!("CARGO_BIN_EXE_lom"))
+        .args(["--serve", "--renderer", "cpu", "--image-source", "dma-buf"])
+        .env_clear()
+        .env("SOPHIA_SHELL_9P_SOCKET", "/nonexistent/lom.sock")
+        .env(
+            "SOPHIA_SHELL_CONFIG",
+            concat!(env!("CARGO_MANIFEST_DIR"), "/examples/minimal/shell.kdl"),
+        )
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(2));
+    assert!(result.stdout.is_empty(), "no renderer or transport started");
+    assert!(
+        String::from_utf8(result.stderr)
+            .unwrap()
+            .contains("--renderer cpu requires the owned-ring image source")
+    );
+}
+
+#[test]
+fn cpu_rendering_needs_the_same_supervisor_inputs_before_any_renderer() {
+    for arguments in [
+        &["--serve", "--renderer", "cpu"][..],
+        &["--serve", "--renderer", "gpu"],
+    ] {
+        let result = run(arguments);
+        assert_eq!(result.status.code(), Some(2));
+        assert!(result.stdout.is_empty());
+        assert!(
+            String::from_utf8(result.stderr)
+                .unwrap()
+                .contains("SOPHIA_SHELL_9P_SOCKET is required")
+        );
+    }
+}

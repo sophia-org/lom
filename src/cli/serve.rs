@@ -15,8 +15,18 @@ use sophia_shell_protocol::{
 use std::os::fd::AsFd;
 use std::{path::Path, time::Duration};
 
-pub(super) fn run(dma: Option<bool>) -> Result<(), String> {
-    run_with_renderer(dma, |epoch, dma, stop| {
+pub(super) fn run(dma: Option<bool>, cpu: bool) -> Result<(), String> {
+    run_with_renderer(dma, cpu, |epoch, dma, stop| {
+        if cpu {
+            // Explicit CPU mode reads no GPU grant and never falls back to GPU.
+            // The record states the source-selected renderer, not admission:
+            // an inherited grant may exist but is not used.
+            let renderer = RendererWorker::start_cpu_until_stopped(&stop.flag, stop.wake.as_fd())?;
+            println!(
+                "lom_renderer schema=1 renderer=vello-cpu source=owned-ring-fill gpu=not-used"
+            );
+            return Ok(renderer);
+        }
         let grant = GpuGrant::from_environment(epoch)?;
         let (renderer, admission) =
             RendererWorker::start_until_stopped(grant, dma, &stop.flag, stop.wake.as_fd())?;
@@ -27,10 +37,11 @@ pub(super) fn run(dma: Option<bool>) -> Result<(), String> {
 
 fn run_with_renderer<R: ContentRenderer>(
     dma: Option<bool>,
+    cpu: bool,
     renderer: impl FnOnce(u64, bool, &super::shutdown::Shutdown) -> Result<R, String>,
 ) -> Result<(), String> {
     let stop = super::shutdown::Shutdown::install()?;
-    let result = serve(&stop, dma, renderer);
+    let result = serve(&stop, dma, cpu, renderer);
     if stop.requested() {
         // Dropping the connection revokes this owner's content and leaves any
         // ambiguous submission with its original owner; nothing is replayed.
@@ -44,6 +55,7 @@ fn run_with_renderer<R: ContentRenderer>(
 fn serve<R: ContentRenderer>(
     stop: &super::shutdown::Shutdown,
     dma: Option<bool>,
+    cpu: bool,
     renderer: impl FnOnce(u64, bool, &super::shutdown::Shutdown) -> Result<R, String>,
 ) -> Result<(), String> {
     if std::env::var_os("SOPHIA_SHELL_SOCKET").is_some() {
@@ -59,6 +71,9 @@ fn serve<R: ContentRenderer>(
         .map_err(|error| format!("{}:{error}", Path::new(&config_path).display()))?;
     validate_theme(&config, &theme)?;
     let dma = dma.unwrap_or(config.dma_buf);
+    if cpu && dma {
+        return Err("--renderer cpu requires the owned-ring image source, not dma-buf".into());
+    }
     let allowance = std::env::var("SOPHIA_SHELL_BAR_THICKNESS")
         .map_err(|_| "SOPHIA_SHELL_BAR_THICKNESS is required for --serve")?
         .parse::<u32>()

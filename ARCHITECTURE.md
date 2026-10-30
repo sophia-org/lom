@@ -336,6 +336,31 @@ actual native retirement before promoting direct GPU-buffer handoff. A future
 GPU bridge is optional execution work, not a shell protocol requirement or
 Vello server inside Sophia. CPU rendering is not a silent production fallback.
 
+`lom --serve --renderer cpu` is an explicit, opt-in Vello CPU mode; GPU remains
+the default and neither mode falls back to the other. It reads no GPU grant and
+requires the owned ring (`dma-buf` is refused). The service acquires the
+connection's single SDK ring loan before queueing the sole render job, keeps
+polling while the same capacity-one worker renders the retained scene into the
+exact slot payload and converts it in place with the readback path's
+premultiplied-BGRA conversion. At acquire the owner snapshots the render
+identity, scale fraction, current and target slot, target resource ID and
+generation, and the exact `RingUpload` (topology, dimensions and peeked resource
+ID); it compares that snapshot field for field, and the worker's reported
+identity and geometry against it, at completion and again immediately before
+commit, and commits the snapshot's metadata. A result stale at completion is
+aborted with no Offer, resource ID or slot generation spent and the panel is
+rendered again. Once staged, a stale snapshot, a refused commit or the
+presentation deadline is terminal like every other service error, and the caller
+must drop and restart the service. Before a successful Offer the loan is aborted
+before the error returns, so nothing is published or spent and the slot is not
+restored. After a successful Offer a timeout stays terminal without rolling back
+IDs or reclaiming settlement custody. Accepted plus the exact SlotReleased still
+precede reuse. A worker error or panic drops the loan, faulting the ring before
+the completion wake; a timed out job keeps its storage and the service ends. Its
+startup record (`gpu=not-used`) names the source-selected renderer and is not
+admission evidence. This removes the client-side copy into the slot only; native
+presentation, default adoption and performance are unqualified.
+
 Deadlines initiate recovery; they never authorize reuse of storage still held
 by GPU or Engine consumers. Budget reservations and terminal-response capacity
 must precede accepting obligations. Bound known allocations and retain the

@@ -3,6 +3,7 @@
 mod custody;
 mod image;
 mod presentation;
+mod ring_fill;
 mod scheduler;
 mod statistics;
 mod target_generations;
@@ -127,6 +128,26 @@ pub trait ContentRenderer {
 
     /// Poll the sole in-flight render without blocking protocol ownership.
     fn poll(&mut self) -> Result<Option<RenderedContent>, String>;
+
+    /// Whether renders are written into an owner-acquired ring loan, which
+    /// completes as `RenderImage::RingFill` instead of through `submit`.
+    fn uses_ring_fill(&self) -> bool {
+        false
+    }
+
+    /// Queue exactly one render into `fill`. A refusal returns the untouched
+    /// loan so the owner can abort it without publishing or faulting the ring.
+    fn submit_fill(
+        &mut self,
+        _identity: RenderIdentity,
+        _model: Model,
+        _width: u32,
+        _height: u32,
+        _scale: f64,
+        fill: sophia_shell_client::OwnedRingSlotFill,
+    ) -> Result<(), (String, sophia_shell_client::OwnedRingSlotFill)> {
+        Err(("renderer does not fill ring slots".into(), fill))
+    }
 }
 
 struct Panel {
@@ -204,6 +225,7 @@ pub struct ShellService<R> {
     pending_activation_events: BTreeSet<u64>,
     presentations: Vec<PendingPresentation>,
     rendering_panel: Option<usize>,
+    rendering_fill: Option<ring_fill::FillTarget>,
     next_panel: usize,
     progressed: bool,
     statistics: Option<WorkStatistics>,
@@ -317,6 +339,7 @@ impl<R: ContentRenderer> ShellService<R> {
             pending_activation_events: BTreeSet::new(),
             presentations: Vec::with_capacity(pending_capacity),
             rendering_panel: None,
+            rendering_fill: None,
             next_panel: 0,
             progressed: false,
             statistics: None,
@@ -663,7 +686,7 @@ impl<R: ContentRenderer> ShellService<R> {
     }
 }
 
-fn pixel_checksum(bytes: &[u8]) -> u64 {
+pub(crate) fn pixel_checksum(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf29ce484222325, |hash, byte| {
         (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
     })

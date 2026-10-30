@@ -222,3 +222,12 @@ caller and the distinct indicator revision on actual encoded responses.
 The external `tests/wake.rs` target mounts the private wake module to test the
 actual completion/eventfd ordering, disconnect wake and deadline expiry without
 a GPU or a public notification API.
+
+`tests/support/render_cpu.rs` is mounted privately from `src/render/cpu.rs` to
+compare the crate-private direct-fill raster byte for byte against the same
+Vello CPU renderer's owned image plus the readback conversion, without exporting
+a raster API. `tests/support/render_worker.rs` is mounted privately from the
+render worker to drive its private mailbox with real SDK ring loans from a
+standalone `RingProducer`: refused submissions return the loan, a late queued
+fill is never received, and a failed render faults the ring before the
+completion wake. Neither opens a GPU or display.

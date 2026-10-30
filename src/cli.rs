@@ -18,7 +18,7 @@ use std::{
 };
 
 /// Help displayed without loading configuration, fonts or a GPU.
-pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n       lom content-proof --socket FILE\n       lom --serve [--image-source owned-ring|dma-buf]\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\ncontent-proof exercises fixed diagnostic pixels over an explicitly admitted Sophia 9P socket; it does not present a panel.\n--serve is the persistent protected Sophia content-shell entry point.\n";
+pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n       lom content-proof --socket FILE\n       lom --serve [--image-source owned-ring|dma-buf] [--renderer gpu|cpu]\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\ncontent-proof exercises fixed diagnostic pixels over an explicitly admitted Sophia 9P socket; it does not present a panel.\n--serve is the persistent protected Sophia content-shell entry point. --renderer cpu explicitly selects Vello CPU rendering into owned-ring slots without a GPU grant; it is never a fallback.\n";
 
 /// Run one diagnostic command; the caller prints any returned boundary failure.
 pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
@@ -36,7 +36,7 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
     let allowed = match command {
         "check-config" => &["--config", "--theme"][..],
         "content-proof" => &["--socket"][..],
-        "--serve" => &["--image-source"][..],
+        "--serve" => &["--image-source", "--renderer"][..],
         "preview" => &[
             "--config",
             "--theme",
@@ -58,7 +58,13 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
             Some(value) if value == "dma-buf" => Some(true),
             _ => return Err("--image-source must be owned-ring or dma-buf".into()),
         };
-        return serve::run(dma);
+        let cpu = match options.get("--renderer") {
+            None => false,
+            Some(value) if value == "gpu" => false,
+            Some(value) if value == "cpu" => true,
+            _ => return Err("--renderer must be gpu or cpu".into()),
+        };
+        return serve::run(dma, cpu);
     }
     let (config, theme) = load(
         &required(&options, "--config")?,

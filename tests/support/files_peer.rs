@@ -13,14 +13,16 @@ use std::{
 pub enum Message {
     Content(TransactionId, Box<ShellContentRecord>),
     Activation(TransactionId, ShellIndicatorActivation),
-    /// One ring offer verified by the peer (slot bytes checked there).
-    Image(ShellImageMetadata),
+    /// One ring offer verified by the peer, with the slot bytes it read.
+    Image(ShellImageMetadata, Vec<u8>),
 }
 
 enum Command {
     Content(TransactionId, ShellContentRecord),
     Indicators(TransactionId, ShellIndicatorSnapshot),
     Activation(TransactionId, ShellIndicatorActivationOutcome),
+    /// Withhold SlotReleased (Accepted still goes out); false sends the held ones.
+    HoldSlotReleases(bool),
     Stop,
 }
 
@@ -82,8 +84,20 @@ impl Peer {
         self.command.send(Command::Activation(tx, outcome)).unwrap();
     }
 
+    /// Only the CPU direct-fill Accepted-only test holds releases.
+    #[allow(dead_code)]
+    pub fn hold_slot_releases(&self, hold: bool) {
+        self.command.send(Command::HoldSlotReleases(hold)).unwrap();
+    }
+
     pub fn receive(&self) -> Message {
         self.messages.recv_timeout(Duration::from_secs(3)).unwrap()
+    }
+
+    /// A bounded wait that lets a scenario stop when the client goes away.
+    #[allow(dead_code)]
+    pub fn try_receive(&self, timeout: Duration) -> Option<Message> {
+        self.messages.recv_timeout(timeout).ok()
     }
 
     pub fn no_message(&self) {
@@ -131,9 +145,14 @@ fn run(
         encode_shell_file_limits(object_header(ShellFileKind::Limits), limits.clone()).unwrap(),
     );
     static ENDPOINT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    // The clock keeps a reused PID from meeting an earlier run's endpoint.
     let endpoint_name = format!(
-        "lom-image-{}-{}.sock",
+        "lom-image-{}-{}-{}.sock",
         std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
         ENDPOINT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     let endpoint_path = std::env::temp_dir().join(&endpoint_name);
@@ -150,6 +169,7 @@ fn run(
     let mut hello_seen = false;
     let mut ring: Option<(RingIdentity, u64, std::os::fd::OwnedFd)> = None;
     let mut pending_ring: Option<RingRegistration> = None;
+    let mut held_releases: Option<Vec<RingEvent>> = None;
     let mut negotiated = false;
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
@@ -157,6 +177,15 @@ fn run(
         while negotiated && let Ok(command) = commands.try_recv() {
             match command {
                 Command::Stop => return,
+                Command::HoldSlotReleases(true) => {
+                    held_releases.get_or_insert_with(Vec::new);
+                }
+                Command::HoldSlotReleases(false) => {
+                    for mut event in held_releases.take().unwrap_or_default() {
+                        event.sequence = wire.next_sequence();
+                        wire.event_raw(&event.encode());
+                    }
+                }
                 Command::Content(_, ShellContentRecord::Limits(value)) => assert_eq!(value, limits),
                 Command::Content(tx, record) => emit(&mut wire, tx, record),
                 Command::Indicators(transaction, snapshot) => {
@@ -357,7 +386,7 @@ fn run(
                                     declared_bytes: declared,
                                     modifier: 0,
                                 };
-                                messages.send(Message::Image(metadata)).unwrap();
+                                messages.send(Message::Image(metadata, pixels)).unwrap();
                                 emit(
                                     &mut wire,
                                     TransactionId::from_raw(offer.offer_id),
@@ -373,11 +402,10 @@ fn run(
                                         admitted_bytes: declared,
                                     }),
                                 );
-                                let sequence = wire.next_sequence();
-                                let event = RingEvent {
+                                let mut event = RingEvent {
                                     kind: RingEventKind::SlotReleased,
                                     identity: *identity,
-                                    sequence,
+                                    sequence: 0,
                                     offer_id: offer.offer_id,
                                     slot: offer.slot,
                                     slot_generation: offer.slot_generation,
@@ -386,7 +414,12 @@ fn run(
                                     reason: 0,
                                     changed_generation: false,
                                 };
-                                wire.event_raw(&event.encode());
+                                if let Some(held) = &mut held_releases {
+                                    held.push(event);
+                                } else {
+                                    event.sequence = wire.next_sequence();
+                                    wire.event_raw(&event.encode());
+                                }
                             }
                         }
                     }

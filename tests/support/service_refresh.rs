@@ -194,7 +194,7 @@ fn exchange(stream: &mut Peer) {
     let mut next_event = 100;
     loop {
         let message = stream.receive();
-        if let Message::Image(metadata) = message {
+        if let Message::Image(metadata, _) = message {
             // One sealed ISB offer, already verified by the peer
             // before Accepted + SourceReleased were sent.
             assert!(resources.insert(metadata.resource, metadata).is_none());

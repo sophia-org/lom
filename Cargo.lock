@@ -1878,7 +1878,7 @@ checksum = "ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891"
 [[package]]
 name = "sophia-9p-client"
 version = "0.4.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0706ea2c78cd16ba59ed209620354f30a2c78906#0706ea2c78cd16ba59ed209620354f30a2c78906"
+source = "git+file:///home/niltempus/dev/sdk-rs-cpu-owned-fill?rev=99b05e345be34678128733bf0166ded85b06239a#99b05e345be34678128733bf0166ded85b06239a"
 dependencies = [
  "rustix",
  "sophia-9p-records",
@@ -1887,17 +1887,17 @@ dependencies = [
 [[package]]
 name = "sophia-9p-records"
 version = "0.4.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0706ea2c78cd16ba59ed209620354f30a2c78906#0706ea2c78cd16ba59ed209620354f30a2c78906"
+source = "git+file:///home/niltempus/dev/sdk-rs-cpu-owned-fill?rev=99b05e345be34678128733bf0166ded85b06239a#99b05e345be34678128733bf0166ded85b06239a"
 
 [[package]]
 name = "sophia-desktop-ids"
 version = "0.4.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0706ea2c78cd16ba59ed209620354f30a2c78906#0706ea2c78cd16ba59ed209620354f30a2c78906"
+source = "git+file:///home/niltempus/dev/sdk-rs-cpu-owned-fill?rev=99b05e345be34678128733bf0166ded85b06239a#99b05e345be34678128733bf0166ded85b06239a"
 
 [[package]]
 name = "sophia-image-producer"
 version = "0.4.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0706ea2c78cd16ba59ed209620354f30a2c78906#0706ea2c78cd16ba59ed209620354f30a2c78906"
+source = "git+file:///home/niltempus/dev/sdk-rs-cpu-owned-fill?rev=99b05e345be34678128733bf0166ded85b06239a#99b05e345be34678128733bf0166ded85b06239a"
 dependencies = [
  "rustix",
  "sophia-isb",
@@ -1908,7 +1908,7 @@ dependencies = [
 [[package]]
 name = "sophia-isb"
 version = "0.4.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0706ea2c78cd16ba59ed209620354f30a2c78906#0706ea2c78cd16ba59ed209620354f30a2c78906"
+source = "git+file:///home/niltempus/dev/sdk-rs-cpu-owned-fill?rev=99b05e345be34678128733bf0166ded85b06239a#99b05e345be34678128733bf0166ded85b06239a"
 dependencies = [
  "rustix",
 ]
@@ -1916,7 +1916,7 @@ dependencies = [
 [[package]]
 name = "sophia-launch-client"
 version = "0.4.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0706ea2c78cd16ba59ed209620354f30a2c78906#0706ea2c78cd16ba59ed209620354f30a2c78906"
+source = "git+file:///home/niltempus/dev/sdk-rs-cpu-owned-fill?rev=99b05e345be34678128733bf0166ded85b06239a#99b05e345be34678128733bf0166ded85b06239a"
 dependencies = [
  "rustix",
  "sophia-9p-client",
@@ -1925,12 +1925,12 @@ dependencies = [
 [[package]]
 name = "sophia-lock-protocol"
 version = "0.4.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0706ea2c78cd16ba59ed209620354f30a2c78906#0706ea2c78cd16ba59ed209620354f30a2c78906"
+source = "git+file:///home/niltempus/dev/sdk-rs-cpu-owned-fill?rev=99b05e345be34678128733bf0166ded85b06239a#99b05e345be34678128733bf0166ded85b06239a"
 
 [[package]]
 name = "sophia-shell-client"
 version = "0.4.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0706ea2c78cd16ba59ed209620354f30a2c78906#0706ea2c78cd16ba59ed209620354f30a2c78906"
+source = "git+file:///home/niltempus/dev/sdk-rs-cpu-owned-fill?rev=99b05e345be34678128733bf0166ded85b06239a#99b05e345be34678128733bf0166ded85b06239a"
 dependencies = [
  "rustix",
  "sophia-9p-client",
@@ -1954,7 +1954,7 @@ dependencies = [
 [[package]]
 name = "sophia-shell-protocol"
 version = "0.4.0"
-source = "git+https://github.com/sophia-org/sophia-desktop-sdk-rs?rev=0706ea2c78cd16ba59ed209620354f30a2c78906#0706ea2c78cd16ba59ed209620354f30a2c78906"
+source = "git+file:///home/niltempus/dev/sdk-rs-cpu-owned-fill?rev=99b05e345be34678128733bf0166ded85b06239a#99b05e345be34678128733bf0166ded85b06239a"
 dependencies = [
  "sophia-desktop-ids",
 ]

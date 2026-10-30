@@ -15,7 +15,7 @@ pub(super) fn exchange(stream: &mut Peer) {
         // with the content records below.
         let (transaction, record) = loop {
             match stream.receive() {
-                Message::Image(metadata) => {
+                Message::Image(metadata, _) => {
                     assert_eq!(metadata.resource, first_use + 1);
                     first_use += 1;
                     assert_eq!(metadata.resource_generation, 1);

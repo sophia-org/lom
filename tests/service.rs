@@ -34,6 +34,8 @@ mod files_peer;
 mod files_wire;
 use files_peer::{Message, Peer};
 
+#[path = "support/service_fill.rs"]
+mod service_fill;
 #[path = "support/service_multiplex.rs"]
 mod service_multiplex;
 #[path = "support/service_refresh.rs"]
@@ -690,7 +692,7 @@ fn serve_frame(
 }
 
 fn receive_image(stream: &mut Peer) -> sophia_shell_protocol::shell_files::ShellImageMetadata {
-    let Message::Image(metadata) = stream.receive() else {
+    let Message::Image(metadata, _) = stream.receive() else {
         panic!("expected sealed image offer")
     };
     metadata

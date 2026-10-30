@@ -46,7 +46,9 @@ impl<R: ContentRenderer> ShellService<R> {
             if let Some(stats) = &mut self.statistics {
                 stats.renders_completed = stats.renders_completed.saturating_add(1);
             }
-            self.begin_presentation(index, content)?;
+            if let Some(content) = self.accept_render(index, content)? {
+                self.begin_presentation(index, content)?;
+            }
             self.progressed = true;
         }
         if self.rendering_panel.is_none() {
@@ -56,23 +58,32 @@ impl<R: ContentRenderer> ShellService<R> {
                 if !self.render_ready(index)? {
                     continue;
                 }
-                let panel = &mut self.panels[index];
+                let panel = &self.panels[index];
                 let scale = f64::from(panel.allocation.scale_numerator)
                     / f64::from(panel.allocation.scale_denominator);
-                self.rendering_revision = panel.model.workspaces.generation;
-                self.rendering_model = Some(panel.model.clone());
-                self.renderer.submit(
-                    RenderIdentity {
-                        grant: self.limits.grant,
-                        output: panel.output.output,
-                        allocation: panel.allocation.allocation,
-                        scale_generation: panel.allocation.scale_generation,
-                    },
+                let identity = RenderIdentity {
+                    grant: self.limits.grant,
+                    output: panel.output.output,
+                    allocation: panel.allocation.allocation,
+                    scale_generation: panel.allocation.scale_generation,
+                };
+                let (model, width, height) = (
                     panel.model.clone(),
                     panel.allocation.pixel.width,
                     panel.allocation.pixel.height,
-                    scale,
-                )?;
+                );
+                if self.renderer.uses_ring_fill() {
+                    // The connection's single loan serves every panel.
+                    if !self.start_fill(index, model.clone(), scale)? {
+                        break;
+                    }
+                } else {
+                    self.renderer
+                        .submit(identity, model.clone(), width, height, scale)?;
+                }
+                let panel = &mut self.panels[index];
+                self.rendering_revision = panel.model.workspaces.generation;
+                self.rendering_model = Some(model);
                 if let Some(stats) = &mut self.statistics {
                     stats.renders_started = stats.renders_started.saturating_add(1);
                 }

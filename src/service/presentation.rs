@@ -23,6 +23,8 @@ pub(super) struct PendingPresentation {
     accepted: bool,
     permit: Option<ContentFramePermit>,
     content: Option<RenderedContent>,
+    /// The owner's acquire-time snapshot for a direct fill.
+    fill: Option<super::ring_fill::FillTarget>,
     targets: Vec<ContentTargetLayout>,
     targets_prepared: bool,
     raster: RasterSummary,
@@ -65,6 +67,10 @@ impl<R: ContentRenderer> ShellService<R> {
             generation: slot.generation,
         });
         let candidate = 0;
+        let fill = self.rendering_fill.take();
+        if fill.is_some() != matches!(content.pixels, RenderImage::RingFill { .. }) {
+            return Err("owned ring fill and its owner snapshot diverged".into());
+        }
         let pixels = &content.pixels;
         self.panels[panel].resources[slot_index] = ResourceSlot {
             id: slot.id,
@@ -92,6 +98,7 @@ impl<R: ContentRenderer> ShellService<R> {
             targets_prepared: false,
             targets: content.targets.clone(),
             content: Some(content),
+            fill,
             raster_reused: false,
             phase: PresentationPhase::ResourceUnqueued,
             deadline: Instant::now() + RESPONSE_TIMEOUT,
@@ -152,6 +159,7 @@ impl<R: ContentRenderer> ShellService<R> {
             accepted: false,
             permit: None,
             content: None,
+            fill: None,
             raster_reused: true,
             targets_prepared: false,
             targets,
@@ -171,19 +179,22 @@ impl<R: ContentRenderer> ShellService<R> {
         &mut self,
         mut pending: PendingPresentation,
     ) -> Result<bool, String> {
-        if Instant::now() >= pending.deadline {
-            return Err(format!("content {:?} response timed out", pending.phase));
-        }
         let old_phase = pending.phase;
-        let progressed = match pending.phase {
-            PresentationPhase::ResourceUnqueued => self.advance_resource_start(&mut pending)?,
-            PresentationPhase::ResourceAccepted => self.advance_demand_enqueue(&mut pending)?,
-            PresentationPhase::PermitGranted => self.advance_candidate_enqueue(&mut pending)?,
-            PresentationPhase::RetireNeeded => self.advance_retire_enqueue(&mut pending)?,
-            PresentationPhase::ImageOffered => self.advance_image_offered(&mut pending)?,
-            PresentationPhase::DemandSent => self.advance_demand(&mut pending)?,
-            PresentationPhase::CandidateSubmitted => self.advance_candidate(&mut pending)?,
-            PresentationPhase::Presented => false,
+        let progressed = match self.advance_phase(&mut pending) {
+            Ok(progressed) => progressed,
+            Err(error) => {
+                // An uncommitted loan is aborted before the terminal error.
+                // A committed (inert) handle refuses the abort and is left to
+                // settlement and teardown; nothing is rolled back.
+                if let Some(RenderedContent {
+                    pixels: RenderImage::RingFill { fill, .. },
+                    ..
+                }) = pending.content.as_mut()
+                {
+                    let _ = self.connection.image_abort_ring_fill(fill);
+                }
+                return Err(error);
+            }
         };
         self.progressed |= progressed || pending.phase != old_phase;
         if pending.phase == PresentationPhase::Presented {
@@ -192,6 +203,22 @@ impl<R: ContentRenderer> ShellService<R> {
         }
         self.presentations.push(pending);
         Ok(false)
+    }
+
+    fn advance_phase(&mut self, pending: &mut PendingPresentation) -> Result<bool, String> {
+        if Instant::now() >= pending.deadline {
+            return Err(format!("content {:?} response timed out", pending.phase));
+        }
+        match pending.phase {
+            PresentationPhase::ResourceUnqueued => self.advance_resource_start(pending),
+            PresentationPhase::ResourceAccepted => self.advance_demand_enqueue(pending),
+            PresentationPhase::PermitGranted => self.advance_candidate_enqueue(pending),
+            PresentationPhase::RetireNeeded => self.advance_retire_enqueue(pending),
+            PresentationPhase::ImageOffered => self.advance_image_offered(pending),
+            PresentationPhase::DemandSent => self.advance_demand(pending),
+            PresentationPhase::CandidateSubmitted => self.advance_candidate(pending),
+            PresentationPhase::Presented => Ok(false),
+        }
     }
 
     fn advance_resource_start(
@@ -209,11 +236,14 @@ impl<R: ContentRenderer> ShellService<R> {
             }
             _ => return Ok(false),
         }
-        let pixels = &pending
-            .content
-            .as_ref()
-            .ok_or("upload lost its raster")?
-            .pixels;
+        let (width, height, byte_len) = {
+            let pixels = &pending
+                .content
+                .as_ref()
+                .ok_or("upload lost its raster")?
+                .pixels;
+            (pixels.width(), pixels.height(), pixels.byte_len())
+        };
         let resource = ContentResourceId {
             id: if pending.resource.id == 0 {
                 self.next_resource
@@ -231,9 +261,16 @@ impl<R: ContentRenderer> ShellService<R> {
             output: panel.output.output.id,
             output_generation: panel.output.output.generation,
             topology_generation: self.facts.facts_generation,
-            width: pixels.width(),
-            height: pixels.height(),
+            width,
+            height,
         };
+        let (index, slot) = (pending.panel, pending.slot_index);
+        let fresh_slot = self.panels[index].resources[slot];
+        let pixels = &mut pending
+            .content
+            .as_mut()
+            .ok_or("upload lost its raster")?
+            .pixels;
         let offered = match pixels {
             RenderImage::Cpu(pixels) => {
                 self.connection
@@ -255,7 +292,7 @@ impl<R: ContentRenderer> ShellService<R> {
                     stride: 0,
                     plane_count: 1,
                     descriptor_count: 1,
-                    declared_bytes: pixels.byte_len() as u64,
+                    declared_bytes: byte_len as u64,
                     modifier: 0,
                 };
                 self.connection
@@ -269,13 +306,37 @@ impl<R: ContentRenderer> ShellService<R> {
                     .map(|admission| admission.offer)
                     .map_err(|error| error.error)
             }
+            RenderImage::RingFill {
+                fill,
+                identity,
+                width,
+                height,
+                ..
+            } => {
+                // Recheck the acquire-time snapshot, then publish exactly it.
+                // A stale or refused commit is terminal like every other
+                // service error: advance_presentation aborts the loan first,
+                // so no Offer or resource ID is spent, and the caller must
+                // drop and restart the service. The ID is spent only after
+                // the Offer below succeeds.
+                let target = pending
+                    .fill
+                    .ok_or("owned ring fill lost its owner snapshot")?;
+                if !self.fill_unchanged(index, &target, *identity, *width, *height)
+                    || fresh_slot.state != ResourceState::Staging
+                    || fresh_slot.bytes != byte_len as u64
+                {
+                    return Err("owned ring fill became stale before commit".into());
+                }
+                self.connection
+                    .image_commit_ring_fill(fill, target.upload, Instant::now())
+            }
         };
         match offered {
             Ok(offer) => {
                 if let Some(stats) = &mut self.statistics {
                     stats.uploads = stats.uploads.saturating_add(1);
-                    stats.upload_bytes =
-                        stats.upload_bytes.saturating_add(pixels.byte_len() as u64);
+                    stats.upload_bytes = stats.upload_bytes.saturating_add(byte_len as u64);
                 }
                 if pending.resource.id == 0 {
                     self.next_resource = self

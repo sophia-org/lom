@@ -1,9 +1,11 @@
-//! One bounded GPU worker keeps the protocol owner responsive during rendering.
+//! One bounded render worker keeps the protocol owner responsive during rendering.
 
 use super::{GpuAdmissionEvidence, GpuGrant, GpuPreview};
 use crate::model::Model;
 use crate::service::{ContentRenderer, RenderIdentity, RenderImage, RenderedContent};
 use crate::ui::PreviewDriver;
+use imaging_vello_cpu::VelloCpuRenderer;
+use sophia_shell_client::OwnedRingSlotFill;
 use std::os::fd::{AsFd, BorrowedFd};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
 use std::sync::{
@@ -16,6 +18,8 @@ const GPU_JOB_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct RenderJob {
     identity: RenderIdentity,
+    /// The owner's ring loan for CPU direct fill; never present for GPU jobs.
+    fill: Option<OwnedRingSlotFill>,
     model: Model,
     width: u32,
     height: u32,
@@ -66,10 +70,66 @@ impl RetainedHosts {
     }
 }
 
-/// Capacity-one renderer executor. The worker alone owns Vello and wgpu.
+fn label(cpu: bool) -> &'static str {
+    if cpu { "CPU" } else { "GPU" }
+}
+
+fn quarantined(cpu: bool) -> String {
+    format!(
+        "{} worker deadline expired; in-flight resources remain quarantined",
+        label(cpu)
+    )
+}
+
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one per worker thread; boxing would add an indirection to the GPU path"
+)]
+enum Backend {
+    Gpu(GpuPreview, bool),
+    Cpu(VelloCpuRenderer),
+}
+
+/// A failed job drops its loan here, faulting the ring before the completion
+/// is sent and the owner woken; nothing is published or reused.
+fn render(
+    backend: &mut Backend,
+    hosts: &mut RetainedHosts,
+    mut job: RenderJob,
+) -> Result<RenderedContent, String> {
+    let fill = job.fill.take();
+    let identity = job.identity;
+    let (mut scene, targets) = hosts.scene(job)?;
+    let pixels = match (backend, fill) {
+        (Backend::Gpu(renderer, true), None) => RenderImage::Dma(renderer.dma_content(&mut scene)?),
+        (Backend::Gpu(renderer, false), None) => {
+            RenderImage::Cpu(renderer.readback_content(&mut scene)?)
+        }
+        (Backend::Cpu(renderer), Some(mut fill)) => {
+            let pixels = fill
+                .pixels_mut()
+                .map_err(|error| format!("owned ring fill: {error:?}"))?;
+            super::cpu::render_into(renderer, &mut scene, pixels)?;
+            let checksum = crate::service::pixel_checksum(pixels);
+            RenderImage::RingFill {
+                fill,
+                identity,
+                width: scene.width,
+                height: scene.height,
+                checksum,
+            }
+        }
+        _ => return Err("render job does not match the worker backend".into()),
+    };
+    Ok(RenderedContent { pixels, targets })
+}
+
+/// Capacity-one renderer executor. The worker alone owns Vello and wgpu, or
+/// the explicitly selected Vello CPU renderer; neither falls back to the other.
 pub struct RendererWorker {
     wake: Arc<crate::wake::Wake>,
     dma: bool,
+    cpu: bool,
     requests: SyncSender<RenderJob>,
     completions: Receiver<Result<RenderedContent, String>>,
     submitted_at: Option<Instant>,
@@ -96,11 +156,49 @@ impl RendererWorker {
         Self::start_source(grant, dma, Some((stop, fd)))
     }
 
+    /// Explicit Vello CPU worker filling owner-acquired ring loans. It reads
+    /// no GPU grant and is never selected as a fallback.
+    pub fn start_cpu() -> Result<Self, String> {
+        Self::start_backend(false, true, None, || {
+            Ok((Backend::Cpu(VelloCpuRenderer::new(1, 1)), None))
+        })
+        .map(|(worker, _)| worker)
+    }
+
+    pub(crate) fn start_cpu_until_stopped(
+        stop: &AtomicBool,
+        fd: BorrowedFd<'_>,
+    ) -> Result<Self, String> {
+        Self::start_backend(false, true, Some((stop, fd)), || {
+            Ok((Backend::Cpu(VelloCpuRenderer::new(1, 1)), None))
+        })
+        .map(|(worker, _)| worker)
+    }
+
     fn start_source(
         grant: GpuGrant,
         dma: bool,
         stop: Option<(&AtomicBool, BorrowedFd<'_>)>,
     ) -> Result<(Self, GpuAdmissionEvidence), String> {
+        let (worker, evidence) = Self::start_backend(dma, false, stop, move || {
+            let renderer = GpuPreview::new(&grant)?;
+            let evidence = renderer.evidence(&grant)?;
+            Ok((Backend::Gpu(renderer, dma), Some(evidence)))
+        })?;
+        Ok((
+            worker,
+            evidence.ok_or("GPU worker returned no admission evidence")?,
+        ))
+    }
+
+    fn start_backend(
+        dma: bool,
+        cpu: bool,
+        stop: Option<(&AtomicBool, BorrowedFd<'_>)>,
+        backend: impl FnOnce() -> Result<(Backend, Option<GpuAdmissionEvidence>), String>
+        + Send
+        + 'static,
+    ) -> Result<(Self, Option<GpuAdmissionEvidence>), String> {
         let (requests, incoming) = mpsc::sync_channel::<RenderJob>(1);
         let (completed, completions) = mpsc::sync_channel(1);
         let (ready, readiness) = mpsc::sync_channel(1);
@@ -109,15 +207,14 @@ impl RendererWorker {
         let completed = crate::wake::Sender::new(completed, wake.clone());
         let ready = crate::wake::Sender::new(ready, wake.clone());
         std::thread::Builder::new()
-            .name("lom-gpu".into())
+            .name(if cpu { "lom-cpu" } else { "lom-gpu" }.into())
             .spawn(move || {
-                let mut renderer = match GpuPreview::new(&grant) {
-                    Ok(renderer) => {
-                        let evidence = renderer.evidence(&grant);
-                        if ready.send(evidence).is_err() {
+                let mut backend = match backend() {
+                    Ok((backend, evidence)) => {
+                        if ready.send(Ok(evidence)).is_err() {
                             return;
                         }
-                        renderer
+                        backend
                     }
                     Err(error) => {
                         let _ = ready.send(Err(error));
@@ -126,20 +223,14 @@ impl RendererWorker {
                 };
                 let mut hosts = RetainedHosts::default();
                 while let Ok(job) = incoming.recv() {
-                    let result = hosts.scene(job).and_then(|(mut scene, targets)| {
-                        let pixels = if dma {
-                            renderer.dma_content(&mut scene).map(RenderImage::Dma)
-                        } else {
-                            renderer.readback_content(&mut scene).map(RenderImage::Cpu)
-                        }?;
-                        Ok(RenderedContent { pixels, targets })
-                    });
+                    // The result, including any loan, is published before the wake.
+                    let result = render(&mut backend, &mut hosts, job);
                     if completed.send(result).is_err() {
                         break;
                     }
                 }
             })
-            .map_err(|error| format!("start GPU worker: {error}"))?;
+            .map_err(|error| format!("start {} worker: {error}", label(cpu)))?;
         let deadline = Instant::now() + GPU_JOB_TIMEOUT;
         let evidence = loop {
             wake.clear()
@@ -150,12 +241,12 @@ impl RendererWorker {
             match readiness.try_recv() {
                 Ok(result) => break result?,
                 Err(TryRecvError::Disconnected) => {
-                    return Err("GPU worker stopped during startup".into());
+                    return Err(format!("{} worker stopped during startup", label(cpu)));
                 }
                 Err(TryRecvError::Empty) => {}
             }
             if Instant::now() >= deadline {
-                return Err("GPU worker startup timed out".into());
+                return Err(format!("{} worker startup timed out", label(cpu)));
             }
             let mut fds = vec![crate::wake::interest(wake.as_fd(), libc::POLLIN)];
             if let Some((_, fd)) = stop {
@@ -170,6 +261,7 @@ impl RendererWorker {
             Self {
                 wake,
                 dma,
+                cpu,
                 requests,
                 completions,
                 submitted_at: None,
@@ -177,6 +269,31 @@ impl RendererWorker {
             },
             evidence,
         ))
+    }
+}
+
+impl RendererWorker {
+    /// A refused job, and any loan in it, returns to the owner unchanged.
+    fn queue(&mut self, job: RenderJob) -> Result<(), (String, Box<RenderJob>)> {
+        if self.submitted_at.is_some() {
+            return Err((
+                format!("{} worker already owns a render job", label(self.cpu)),
+                Box::new(job),
+            ));
+        }
+        match self.requests.try_send(job) {
+            Ok(()) => {
+                self.submitted_at = Some(Instant::now());
+                Ok(())
+            }
+            Err(TrySendError::Full(job)) => Err((
+                format!("{} worker request capacity is exhausted", label(self.cpu)),
+                Box::new(job),
+            )),
+            Err(TrySendError::Disconnected(job)) => {
+                Err((format!("{} worker stopped", label(self.cpu)), Box::new(job)))
+            }
+        }
     }
 }
 
@@ -196,8 +313,15 @@ impl ContentRenderer for RendererWorker {
         if self.submitted_at.is_none() {
             match self.completions.try_recv() {
                 Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => return Err("GPU worker stopped".into()),
-                Ok(_) => return Err("GPU worker completed an unowned job".into()),
+                Err(TryRecvError::Disconnected) => {
+                    return Err(format!("{} worker stopped", label(self.cpu)));
+                }
+                Ok(_) => {
+                    return Err(format!(
+                        "{} worker completed an unowned job",
+                        label(self.cpu)
+                    ));
+                }
             }
         }
         Ok(())
@@ -215,39 +339,68 @@ impl ContentRenderer for RendererWorker {
         height: u32,
         scale: f64,
     ) -> Result<(), String> {
-        if self.submitted_at.is_some() {
-            return Err("GPU worker already owns a render job".into());
+        if self.cpu {
+            return Err("CPU worker renders only into owned ring fills".into());
         }
-        match self.requests.try_send(RenderJob {
+        self.queue(RenderJob {
             identity,
+            fill: None,
             model,
             width,
             height,
             scale,
-        }) {
-            Ok(()) => {
-                self.submitted_at = Some(Instant::now());
-                Ok(())
-            }
-            Err(TrySendError::Full(_)) => Err("GPU worker request capacity is exhausted".into()),
-            Err(TrySendError::Disconnected(_)) => Err("GPU worker stopped".into()),
+        })
+        .map_err(|(error, _)| error)
+    }
+
+    fn uses_ring_fill(&self) -> bool {
+        self.cpu
+    }
+
+    fn submit_fill(
+        &mut self,
+        identity: RenderIdentity,
+        model: Model,
+        width: u32,
+        height: u32,
+        scale: f64,
+        fill: OwnedRingSlotFill,
+    ) -> Result<(), (String, OwnedRingSlotFill)> {
+        if !self.cpu {
+            return Err(("GPU worker does not fill ring slots".into(), fill));
         }
+        self.queue(RenderJob {
+            identity,
+            fill: Some(fill),
+            model,
+            width,
+            height,
+            scale,
+        })
+        .map_err(|(error, job)| (error, job.fill.expect("queued fill returns with its job")))
     }
 
     fn poll(&mut self) -> Result<Option<RenderedContent>, String> {
         let Some(started) = self.submitted_at else {
-            return Err("GPU worker has no render job to poll".into());
+            return Err(format!(
+                "{} worker has no render job to poll",
+                label(self.cpu)
+            ));
         };
+        // A late CPU fill is never received for commit; its loan remains
+        // quarantined, possibly already queued in the completion receiver.
+        // GPU keeps its existing receive-first order.
+        if self.cpu && started.elapsed() >= self.timeout {
+            return Err(quarantined(true));
+        }
         match self.completions.try_recv() {
             Ok(result) => {
                 self.submitted_at = None;
                 result.map(Some)
             }
             Err(TryRecvError::Empty) if started.elapsed() < self.timeout => Ok(None),
-            Err(TryRecvError::Empty) => {
-                Err("GPU worker deadline expired; in-flight resources remain quarantined".into())
-            }
-            Err(TryRecvError::Disconnected) => Err("GPU worker stopped".into()),
+            Err(TryRecvError::Empty) => Err(quarantined(self.cpu)),
+            Err(TryRecvError::Disconnected) => Err(format!("{} worker stopped", label(self.cpu))),
         }
     }
 }

@@ -5,6 +5,7 @@ use std::path::Path;
 mod worker;
 pub use sophia_shell_gpu::{GpuAdmissionEvidence, GpuGrant};
 pub use worker::RendererWorker;
+mod cpu;
 
 /// Lom-specific pixel and diagnostic adaptation. The inner owner retains GPU
 /// admission and any failed readback resources independently of protocol state.
