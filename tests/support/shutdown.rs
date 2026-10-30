@@ -49,7 +49,7 @@ impl ContentRenderer for Renderer {
 fn shutdown_child() {
     let root = PathBuf::from(std::env::var_os("LOM_SHUTDOWN_TEST").expect("parent fixture"));
     assert_eq!(std::process::id(), 1);
-    run_with_renderer(None, None, |_, _, _, _| {
+    run_with_renderer(Entry::Ordinary, None, None, |_, _, _, _| {
         fs::write(root.join("renderer"), "yes").unwrap();
         Ok(Renderer(root.clone()))
     })
@@ -342,7 +342,7 @@ fn an_explicit_argument_overrides_the_panel_renderer_and_image_source() {
         (Gpu, false, Some(Cpu), Some(true), None),
     ] {
         (config.renderer, config.dma_buf) = (panel, panel_dma);
-        let resolved = resolve(dma, renderer, &config);
+        let resolved = resolve(Entry::Ordinary, dma, renderer, &config);
         assert_eq!(
             resolved.as_ref().ok(),
             expected.as_ref(),
@@ -369,10 +369,86 @@ fn the_cpu_renderer_starts_without_the_grant_the_gpu_renderer_requires() {
     );
     let stop = std::sync::atomic::AtomicBool::new(false);
     let (wake, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
-    let worker = start_renderer(1, false, Cpu, &stop, wake.as_fd()).unwrap();
+    let worker = start_renderer(Entry::Ordinary, 1, false, Cpu, &stop, wake.as_fd()).unwrap();
     assert!(
         worker.uses_ring_fill(),
         "the CPU worker fills owned ring slots"
     );
-    assert!(start_renderer(1, false, Gpu, &stop, wake.as_fd()).is_err());
+    assert!(start_renderer(Entry::Ordinary, 1, false, Gpu, &stop, wake.as_fd()).is_err());
+}
+
+/// Entry admission after the argument and panel merge: the ordinary binary
+/// refuses the copy reference, the diagnostic binary refuses GPU, and CPU
+/// with DMA-BUF stays refused for both. All of it precedes any connection.
+#[cfg(feature = "diagnostic-cpu-reference")]
+#[test]
+fn each_entry_admits_only_its_resolved_renderers() {
+    use crate::config::Renderer::{Cpu, CpuCopyReference as Copy, Gpu};
+    use Entry::{CpuReference as Reference, Ordinary};
+    let ordinary = "the cpu-copy-reference renderer requires lom-cpu-reference";
+    let dma = "requires the owned-ring image source";
+    let (mut config, _) =
+        crate::config::parse_shell_config(include_str!("../../examples/minimal/shell.kdl"))
+            .unwrap();
+    for (entry, panel, panel_dma, renderer, expected) in [
+        (Ordinary, Copy, false, None, Err(ordinary)),
+        (Ordinary, Cpu, false, Some(Copy), Err(ordinary)),
+        (Ordinary, Copy, false, Some(Cpu), Ok(Cpu)),
+        (Ordinary, Copy, false, Some(Gpu), Ok(Gpu)),
+        (Ordinary, Copy, true, None, Err(dma)),
+        (Reference, Gpu, false, None, Err(REFUSE_GPU)),
+        (Reference, Cpu, false, Some(Gpu), Err(REFUSE_GPU)),
+        (Reference, Gpu, true, None, Err(REFUSE_GPU)),
+        (Reference, Cpu, false, None, Ok(Cpu)),
+        (Reference, Copy, false, None, Ok(Copy)),
+        (Reference, Gpu, false, Some(Cpu), Ok(Cpu)),
+        (Reference, Gpu, false, Some(Copy), Ok(Copy)),
+        (Reference, Cpu, true, None, Err(dma)),
+        (Reference, Copy, true, None, Err(dma)),
+    ] {
+        (config.renderer, config.dma_buf) = (panel, panel_dma);
+        let resolved = resolve(entry, None, renderer, &config);
+        match expected {
+            Ok(renderer) => assert_eq!(resolved, Ok((false, renderer)), "{entry:?} {panel:?}"),
+            Err(refusal) => assert!(
+                resolved
+                    .as_ref()
+                    .is_err_and(|error| error.contains(refusal)),
+                "{entry:?} {panel:?} {panel_dma} {renderer:?}: {resolved:?}"
+            ),
+        }
+    }
+}
+
+/// One diagnostic binary starts both CPU arms, without a GPU grant, with its
+/// exact records; the ordinary entry starts neither the copy nor a fallback.
+#[cfg(feature = "diagnostic-cpu-reference")]
+#[test]
+fn the_diagnostic_entry_starts_both_cpu_arms_with_exact_records() {
+    use crate::cli::cpu_reference::record;
+    use crate::config::Renderer::{Cpu, CpuCopyReference, Gpu};
+    assert!(GpuGrant::from_environment(1).is_err());
+    assert_eq!(
+        record(Cpu).unwrap(),
+        "lom_renderer schema=1 renderer=vello-cpu source=owned-ring-fill gpu=not-used diagnostic=cpu-reference"
+    );
+    assert_eq!(
+        record(CpuCopyReference).unwrap(),
+        "lom_renderer schema=1 renderer=vello-cpu source=owned-ring-copy gpu=not-used diagnostic=cpu-reference"
+    );
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let (wake, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    let start = |entry, renderer| start_renderer(entry, 1, false, renderer, &stop, wake.as_fd());
+    assert!(start(Entry::CpuReference, Cpu).unwrap().uses_ring_fill());
+    assert!(
+        !start(Entry::CpuReference, CpuCopyReference)
+            .unwrap()
+            .uses_ring_fill()
+    );
+    for (entry, renderer) in [
+        (Entry::CpuReference, Gpu),
+        (Entry::Ordinary, CpuCopyReference),
+    ] {
+        assert!(start(entry, renderer).is_err(), "{entry:?} {renderer:?}");
+    }
 }

@@ -80,16 +80,21 @@ impl ContentRenderer for Lender {
     }
 }
 
-struct Harness {
-    service: ShellService<Lender>,
+struct Harness<R = Lender> {
+    service: ShellService<R>,
     done: std::sync::mpsc::Sender<()>,
-    offers: std::sync::mpsc::Receiver<()>,
+    /// The bytes of every Offer the peer read.
+    offers: std::sync::mpsc::Receiver<Vec<u8>>,
     server: std::thread::JoinHandle<()>,
     path: std::path::PathBuf,
 }
 
-/// One output, allocated and Ready; the peer reports every Offer it reads.
 fn harness() -> Harness {
+    harness_with(Lender::default())
+}
+
+/// One output, allocated and Ready; the peer reports every Offer it reads.
+fn harness_with<R: ContentRenderer>(renderer: R) -> Harness<R> {
     let path = std::env::temp_dir().join(format!(
         "lom-fill-snapshot-{}-{}.sock",
         std::process::id(),
@@ -159,10 +164,10 @@ fn harness() -> Harness {
             }),
         );
         while wait.try_recv().is_err() {
-            if let Some(files_peer::Message::Image(..)) =
+            if let Some(files_peer::Message::Image(_, pixels)) =
                 peer.try_receive(Duration::from_millis(20))
             {
-                offered.send(()).unwrap();
+                offered.send(pixels).unwrap();
             }
         }
     });
@@ -184,7 +189,7 @@ fn harness() -> Harness {
         config,
         theme,
         48,
-        Lender::default(),
+        renderer,
         path.parent().unwrap().to_path_buf(),
     )
     .unwrap();
@@ -197,8 +202,8 @@ fn harness() -> Harness {
     }
 }
 
-impl Harness {
-    fn until(&mut self, what: &str, ready: impl Fn(&ShellService<Lender>) -> bool) {
+impl<R: ContentRenderer> Harness<R> {
+    fn until(&mut self, what: &str, ready: impl Fn(&ShellService<R>) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while !ready(&self.service) {
             assert!(Instant::now() < deadline, "{what} stalled");
@@ -207,6 +212,17 @@ impl Harness {
         }
     }
 
+    /// Offers the peer read.
+    fn finish(self) -> usize {
+        self.done.send(()).unwrap();
+        drop(self.service);
+        self.server.join().unwrap();
+        let _ = std::fs::remove_file(&self.path);
+        self.offers.try_iter().count()
+    }
+}
+
+impl Harness {
     /// Lend the first payload, as the scheduler does once the ring is Ready.
     fn lent(&mut self) {
         self.until("first loan", |service| service.renderer.job.is_some());
@@ -235,15 +251,6 @@ impl Harness {
             .connection
             .image_abort_ring_fill(&mut fill)
             .is_ok()
-    }
-
-    /// Offers the peer read.
-    fn finish(self) -> usize {
-        self.done.send(()).unwrap();
-        drop(self.service);
-        self.server.join().unwrap();
-        let _ = std::fs::remove_file(&self.path);
-        self.offers.try_iter().count()
     }
 }
 
@@ -355,4 +362,40 @@ fn an_unchanged_snapshot_commits_its_expected_metadata_once() {
         std::thread::yield_now();
     }
     assert_eq!(harness.finish(), 0, "exactly one Offer");
+}
+
+/// Real workers over the real SDK connection and ring peer: the diagnostic
+/// copy arm's existing slice upload reaches the peer with the direct fill's
+/// exact bytes.
+#[cfg(feature = "diagnostic-cpu-reference")]
+#[test]
+fn the_real_copy_reference_worker_offers_the_direct_fill_peer_bytes() {
+    use crate::render::RendererWorker;
+    use std::os::fd::AsFd;
+    fn offered(worker: RendererWorker) -> Vec<u8> {
+        assert!(!worker.uses_dma_buf());
+        let mut harness = harness_with(worker);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let pixels = loop {
+            if let Ok(pixels) = harness.offers.try_recv() {
+                break pixels;
+            }
+            assert!(Instant::now() < deadline, "the peer never read an Offer");
+            harness.service.step().unwrap();
+            std::thread::yield_now();
+        };
+        harness.finish();
+        pixels
+    }
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let (wake, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    let direct = RendererWorker::start_cpu_until_stopped(&stop, wake.as_fd()).unwrap();
+    assert!(direct.uses_ring_fill());
+    let direct = offered(direct);
+    let copy = RendererWorker::start_cpu_copy_reference_until_stopped(&stop, wake.as_fd()).unwrap();
+    assert!(!copy.uses_ring_fill(), "the copy arm uses the slice upload");
+    let copy = offered(copy);
+    assert_eq!(direct.len(), ContentPixels::byte_len(8, 48).unwrap());
+    assert!(direct.iter().any(|byte| *byte != 0), "rendered, not blank");
+    assert_eq!(copy, direct);
 }

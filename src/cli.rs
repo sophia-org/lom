@@ -2,6 +2,8 @@
 
 mod authentication;
 mod content_proof;
+#[cfg(feature = "diagnostic-cpu-reference")]
+mod cpu_reference;
 mod preview;
 mod serve;
 mod shutdown;
@@ -64,7 +66,7 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
             Some(value) if value == "cpu" => Some(Renderer::Cpu),
             _ => return Err("--renderer must be gpu or cpu".into()),
         };
-        return serve::run(dma, renderer);
+        return serve::run(serve::Entry::Ordinary, dma, renderer);
     }
     let (config, theme) = load(
         &required(&options, "--config")?,
@@ -81,6 +83,17 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
         preview::run(config, theme, options)
     }
 }
+
+/// Diagnostic `lom-cpu-reference` entry. It accepts exactly `--serve`; the
+/// protected panel's `renderer` selects `cpu` or `cpu-copy-reference`.
+#[cfg(feature = "diagnostic-cpu-reference")]
+pub fn run_cpu_reference(arguments: Vec<OsString>) -> Result<(), String> {
+    if arguments.len() != 1 || arguments[0] != "--serve" {
+        return Err("lom-cpu-reference accepts exactly --serve".into());
+    }
+    serve::run(serve::Entry::CpuReference, None, None)
+}
+
 fn options(arguments: &[OsString], allowed: &[&str]) -> Result<BTreeMap<String, OsString>, String> {
     if !arguments.len().is_multiple_of(2) {
         return Err("unsupported arguments: expected flag/value pairs".into());

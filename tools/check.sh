@@ -17,3 +17,6 @@ python3 -B tools/audit_dependencies.py
 cargo test --workspace --all-targets --locked
 cargo test --workspace --doc --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
+# The default-off diagnostic CPU copy reference: its binary, renderer and tests.
+cargo test --workspace --all-targets --locked --features lom/diagnostic-cpu-reference
+cargo clippy --workspace --all-targets --locked --features lom/diagnostic-cpu-reference -- -D warnings

@@ -1,6 +1,12 @@
 //! CLI behavior of configuration and preview diagnostics, without a desktop or credentials.
 
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static PANEL: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "diagnostic-cpu-reference")]
+const REFERENCE: &str = env!("CARGO_BIN_EXE_lom-cpu-reference");
 
 fn run(arguments: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_lom"))
@@ -200,9 +206,8 @@ fn cpu_rendering_refuses_the_dma_buf_source_instead_of_falling_back() {
     );
 }
 
-/// Serve with the minimal configuration plus `settings` in its panel, stopping
-/// before any connection: no socket server or allowance is supplied.
-fn serve_with_panel(settings: &str, arguments: &[&str]) -> Output {
+/// A protected configuration: the minimal one plus `settings` in its panel.
+fn panel_config(settings: &str) -> std::path::PathBuf {
     let source = include_str!("../examples/minimal/shell.kdl").replace(
         "panel \"main\" {",
         &format!("panel \"main\" {{\n {settings}"),
@@ -210,10 +215,21 @@ fn serve_with_panel(settings: &str, arguments: &[&str]) -> Output {
     let path = std::env::temp_dir().join(format!(
         "lom-cli-renderer-{}-{}.kdl",
         std::process::id(),
-        arguments.join("_").replace('-', "")
+        PANEL.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::write(&path, source).unwrap();
-    let result = Command::new(env!("CARGO_BIN_EXE_lom"))
+    path
+}
+
+/// Serve with the minimal configuration plus `settings` in its panel, stopping
+/// before any connection: no socket server or allowance is supplied.
+fn serve_with_panel(settings: &str, arguments: &[&str]) -> Output {
+    serve_binary_with_panel(env!("CARGO_BIN_EXE_lom"), settings, arguments)
+}
+
+fn serve_binary_with_panel(binary: &str, settings: &str, arguments: &[&str]) -> Output {
+    let path = panel_config(settings);
+    let result = Command::new(binary)
         .arg("--serve")
         .args(arguments)
         .env_clear()
@@ -270,5 +286,206 @@ fn cpu_rendering_needs_the_same_supervisor_inputs_before_any_renderer() {
                 .unwrap()
                 .contains("SOPHIA_SHELL_9P_SOCKET is required")
         );
+    }
+}
+
+#[test]
+fn production_help_and_renderer_spellings_are_unchanged() {
+    let result = run(&["--help"]);
+    assert_eq!(String::from_utf8(result.stdout).unwrap(), lom::cli::HELP);
+    assert!(!lom::cli::HELP.contains("reference"));
+    let result = run(&["--serve", "--renderer", "cpu-copy-reference"]);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(result.stdout.is_empty());
+    assert!(
+        String::from_utf8(result.stderr)
+            .unwrap()
+            .contains("--renderer must be gpu or cpu")
+    );
+}
+
+#[cfg(feature = "diagnostic-cpu-reference")]
+#[test]
+fn the_cpu_reference_binary_accepts_exactly_serve() {
+    for arguments in [
+        &[][..],
+        &["--help"],
+        &["--version"],
+        &["--serve", "--serve"],
+        &["--serve", "--renderer", "cpu"],
+        &["--serve", "--image-source", "owned-ring"],
+        &[
+            "check-config",
+            "--config",
+            "panel.kdl",
+            "--theme",
+            "theme.kdl",
+        ],
+    ] {
+        let result = Command::new(REFERENCE)
+            .args(arguments)
+            .env_clear()
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(2), "{arguments:?}");
+        assert!(result.stdout.is_empty());
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert!(
+            stderr.contains("lom-cpu-reference accepts exactly --serve"),
+            "{arguments:?}: {stderr}"
+        );
+    }
+}
+
+#[cfg(feature = "diagnostic-cpu-reference")]
+const ORDINARY_REFUSAL: &str = "the cpu-copy-reference renderer requires lom-cpu-reference";
+#[cfg(feature = "diagnostic-cpu-reference")]
+const GPU_REFUSAL: &str = "lom-cpu-reference refuses the GPU renderer";
+#[cfg(feature = "diagnostic-cpu-reference")]
+const DMA_REFUSAL: &str = "the CPU renderer requires the owned-ring image source";
+#[cfg(feature = "diagnostic-cpu-reference")]
+const COPY: &str = "renderer \"cpu-copy-reference\"";
+
+#[cfg(feature = "diagnostic-cpu-reference")]
+#[test]
+fn entry_selection_is_refused_before_the_allowance() {
+    // An admitted selection reaches the next supervisor input; a refused one
+    // stops first, so the error shows where the selection was decided.
+    let passed = "SOPHIA_SHELL_BAR_THICKNESS is required";
+    let lom = env!("CARGO_BIN_EXE_lom");
+    let cpu_dma = "renderer \"cpu\"\n image-source \"dma-buf\"";
+    let copy_dma = "renderer \"cpu-copy-reference\"\n image-source \"dma-buf\"";
+    for (binary, settings, arguments, expected) in [
+        (lom, COPY, &[][..], ORDINARY_REFUSAL),
+        (lom, COPY, &["--renderer", "cpu"], passed),
+        (lom, COPY, &["--renderer", "gpu"], passed),
+        (lom, "renderer \"cpu\"", &[], passed),
+        (REFERENCE, "", &[], GPU_REFUSAL),
+        (REFERENCE, "renderer \"gpu\"", &[], GPU_REFUSAL),
+        (REFERENCE, "renderer \"cpu\"", &[], passed),
+        (REFERENCE, COPY, &[], passed),
+        (REFERENCE, cpu_dma, &[], DMA_REFUSAL),
+        (REFERENCE, copy_dma, &[], DMA_REFUSAL),
+    ] {
+        let result = serve_binary_with_panel(binary, settings, arguments);
+        let stderr = String::from_utf8(result.stderr).unwrap();
+        assert_eq!(result.status.code(), Some(2), "{settings} {arguments:?}");
+        assert!(result.stdout.is_empty(), "no renderer or transport started");
+        assert!(
+            stderr.contains(expected),
+            "{binary} {settings} {arguments:?}: {stderr}"
+        );
+    }
+}
+
+/// With every supervisor input present, a refused selection never connects to
+/// the listening shell socket; an admitted selection does (the control).
+#[cfg(feature = "diagnostic-cpu-reference")]
+#[test]
+fn a_refused_entry_selection_never_connects() {
+    use std::os::unix::net::UnixListener;
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    // A fresh directory per run: a reused PID never meets a stale socket, and
+    // only this fixture's own directory is removed.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory =
+        std::env::temp_dir().join(format!("lom-cli-connect-{}-{nanos}", std::process::id()));
+    std::fs::create_dir(&directory).unwrap();
+    let socket = directory.join("shell.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let serve = |binary: &str, settings: &str| {
+        let config = panel_config(settings);
+        let child = Command::new(binary)
+            .arg("--serve")
+            .env_clear()
+            .env("SOPHIA_SHELL_9P_SOCKET", &socket)
+            .env("SOPHIA_SHELL_CONFIG", &config)
+            .env("SOPHIA_SHELL_BAR_THICKNESS", "24")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        (child, config)
+    };
+    let cpu_dma = "renderer \"cpu\"\n image-source \"dma-buf\"";
+    for (binary, settings, refusal) in [
+        (env!("CARGO_BIN_EXE_lom"), COPY, ORDINARY_REFUSAL),
+        (REFERENCE, "renderer \"gpu\"", GPU_REFUSAL),
+        (REFERENCE, cpu_dma, DMA_REFUSAL),
+    ] {
+        let (child, config) = serve(binary, settings);
+        let result = child.wait_with_output().unwrap();
+        std::fs::remove_file(config).unwrap();
+        assert_eq!(result.status.code(), Some(2), "{settings}");
+        assert!(result.stdout.is_empty(), "no transport or renderer record");
+        assert!(String::from_utf8(result.stderr).unwrap().contains(refusal));
+        let error = listener.accept().unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock, "{settings}");
+    }
+    let (child, config) = serve(REFERENCE, COPY);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let stream = loop {
+        match listener.accept() {
+            Ok((stream, _)) => break stream,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                assert!(Instant::now() < deadline, "the control never connected");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("{error}"),
+        }
+    };
+    drop(stream);
+    let result = child.wait_with_output().unwrap();
+    std::fs::remove_file(config).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+    assert!(
+        !result.status.success(),
+        "the dropped peer ends the control"
+    );
+    assert!(result.stdout.is_empty(), "no transport was negotiated");
+}
+
+/// `check-config` stays binary-neutral: with the feature, the ordinary binary
+/// validates a copy-reference panel that its `--serve` refuses; without it,
+/// the same document is refused.
+#[test]
+fn check_config_parses_the_copy_reference_only_with_its_feature() {
+    let source = include_str!("../examples/minimal/config.kdl").replace(
+        "panel \"main\" {",
+        "panel \"main\" {\n renderer \"cpu-copy-reference\"",
+    );
+    let path = std::env::temp_dir().join(format!(
+        "lom-cli-check-copy-{}-{}.kdl",
+        std::process::id(),
+        PANEL.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&path, source).unwrap();
+    let result = run(&[
+        "check-config",
+        "--config",
+        path.to_str().unwrap(),
+        "--theme",
+        concat!(env!("CARGO_MANIFEST_DIR"), "/examples/minimal/theme.kdl"),
+    ]);
+    std::fs::remove_file(path).unwrap();
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    {
+        assert!(result.status.success(), "{stderr}");
+        assert!(
+            String::from_utf8(result.stdout)
+                .unwrap()
+                .contains("configuration valid: main")
+        );
+    }
+    #[cfg(not(feature = "diagnostic-cpu-reference"))]
+    {
+        assert_eq!(result.status.code(), Some(2));
+        assert!(stderr.contains("expected gpu or cpu"), "{stderr}");
     }
 }

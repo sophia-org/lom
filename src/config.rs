@@ -37,6 +37,10 @@ pub enum Renderer {
     Gpu,
     /// Vello CPU into owned-ring slots, without a GPU grant.
     Cpu,
+    /// Diagnostic only: the same Vello CPU renderer into an owned image, then
+    /// the existing slice upload. Only `lom-cpu-reference` may start it.
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    CpuCopyReference,
 }
 
 /// Position of the desired panel; placement remains Engine-owned.

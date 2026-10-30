@@ -88,6 +88,8 @@ fn quarantined(cpu: bool) -> String {
 enum Backend {
     Gpu(GpuPreview, bool),
     Cpu(VelloCpuRenderer),
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    CpuCopy(VelloCpuRenderer),
 }
 
 /// A failed job drops its loan here, faulting the ring before the completion
@@ -119,6 +121,10 @@ fn render(
                 checksum,
             }
         }
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        (Backend::CpuCopy(renderer), None) => {
+            RenderImage::Cpu(super::cpu::render_copy(renderer, &mut scene)?)
+        }
         _ => return Err("render job does not match the worker backend".into()),
     };
     Ok(RenderedContent { pixels, targets })
@@ -130,6 +136,9 @@ pub struct RendererWorker {
     wake: Arc<crate::wake::Wake>,
     dma: bool,
     cpu: bool,
+    /// Diagnostic copy reference: a CPU worker that takes slice jobs only.
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    copy: bool,
     requests: SyncSender<RenderJob>,
     completions: Receiver<Result<RenderedContent, String>>,
     submitted_at: Option<Instant>,
@@ -173,6 +182,20 @@ impl RendererWorker {
             Ok((Backend::Cpu(VelloCpuRenderer::new(1, 1)), None))
         })
         .map(|(worker, _)| worker)
+    }
+
+    /// Diagnostic Vello CPU copy reference: the same renderer into an owned
+    /// image for the existing slice upload. It never fills ring loans.
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    pub(crate) fn start_cpu_copy_reference_until_stopped(
+        stop: &AtomicBool,
+        fd: BorrowedFd<'_>,
+    ) -> Result<Self, String> {
+        let (mut worker, _) = Self::start_backend(false, true, Some((stop, fd)), || {
+            Ok((Backend::CpuCopy(VelloCpuRenderer::new(1, 1)), None))
+        })?;
+        worker.copy = true;
+        Ok(worker)
     }
 
     fn start_source(
@@ -262,6 +285,8 @@ impl RendererWorker {
                 wake,
                 dma,
                 cpu,
+                #[cfg(feature = "diagnostic-cpu-reference")]
+                copy: false,
                 requests,
                 completions,
                 submitted_at: None,
@@ -339,7 +364,7 @@ impl ContentRenderer for RendererWorker {
         height: u32,
         scale: f64,
     ) -> Result<(), String> {
-        if self.cpu {
+        if self.uses_ring_fill() {
             return Err("CPU worker renders only into owned ring fills".into());
         }
         self.queue(RenderJob {
@@ -354,6 +379,10 @@ impl ContentRenderer for RendererWorker {
     }
 
     fn uses_ring_fill(&self) -> bool {
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        if self.copy {
+            return false;
+        }
         self.cpu
     }
 
@@ -368,6 +397,10 @@ impl ContentRenderer for RendererWorker {
     ) -> Result<(), (String, OwnedRingSlotFill)> {
         if !self.cpu {
             return Err(("GPU worker does not fill ring slots".into(), fill));
+        }
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        if self.copy {
+            return Err(("CPU copy reference does not fill ring slots".into(), fill));
         }
         self.queue(RenderJob {
             identity,

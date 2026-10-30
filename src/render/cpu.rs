@@ -30,6 +30,19 @@ pub(crate) fn render_into(
     Ok(())
 }
 
+/// Diagnostic copy reference: the same renderer into a new owned image, then
+/// the existing readback conversion for the slice upload.
+#[cfg(feature = "diagnostic-cpu-reference")]
+pub(crate) fn render_copy(
+    renderer: &mut VelloCpuRenderer,
+    scene: &mut PreviewScene,
+) -> Result<ContentPixels, String> {
+    let image = renderer
+        .render_source(&mut scene.scene, scene.width, scene.height)
+        .map_err(|error| format!("Vello CPU render: {error:?}"))?;
+    ContentPixels::from_rgba8(scene.width, scene.height, image.data)
+}
+
 #[cfg(test)]
 #[path = "../../tests/support/render_cpu.rs"]
 mod tests;

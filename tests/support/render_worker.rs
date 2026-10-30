@@ -16,6 +16,8 @@ fn mailbox_allows_only_one_job_and_reports_one_completion() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: false,
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        copy: false,
         requests,
         completions,
         submitted_at: None,
@@ -44,6 +46,8 @@ fn expired_worker_job_is_quarantined_instead_of_reused() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: false,
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        copy: false,
         requests,
         completions,
         submitted_at: Some(Instant::now()),
@@ -117,6 +121,8 @@ fn an_idle_worker_clears_late_wakes_and_reports_disconnect() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: false,
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        copy: false,
         requests,
         completions,
         submitted_at: None,
@@ -144,6 +150,8 @@ fn a_late_cpu_completion_is_refused_and_left_with_the_quarantined_worker() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: true,
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        copy: false,
         requests,
         completions,
         submitted_at: Some(Instant::now()),
@@ -174,6 +182,8 @@ fn cpu_and_gpu_workers_refuse_each_others_submissions() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: true,
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        copy: false,
         requests,
         completions,
         submitted_at: None,
@@ -340,6 +350,8 @@ fn a_late_queued_cpu_fill_is_refused_and_faults_only_when_quarantine_ends() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: true,
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        copy: false,
         requests,
         completions,
         submitted_at: Some(Instant::now()),
@@ -380,6 +392,8 @@ fn refused_cpu_submissions_return_the_real_loan_unspent() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: true,
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        copy: false,
         requests,
         completions,
         submitted_at: Some(Instant::now()),
@@ -402,4 +416,45 @@ fn refused_cpu_submissions_return_the_real_loan_unspent() {
         .commit_owned_slot(&mut fill, ring_upload(), 5)
         .unwrap();
     assert_eq!(offer, 1, "refusals spent no offer ID");
+}
+
+/// The diagnostic copy arm returns the direct fill's bytes for the same job
+/// as owned pixels for the slice upload, and returns a refused loan unspent.
+#[cfg(feature = "diagnostic-cpu-reference")]
+#[test]
+fn the_copy_reference_worker_returns_the_direct_fill_bytes_and_refuses_loans() {
+    let mut producer = ready_ring();
+    let fill = producer.acquire_owned_slot(8 * 48 * 4, 3).unwrap();
+    let mut direct = RendererWorker::start_cpu().unwrap();
+    direct.timeout = Duration::from_secs(30);
+    direct
+        .submit_fill(identity(), model(), 8, 48, 2.0, fill)
+        .map_err(|(error, _)| error)
+        .unwrap();
+    let RenderImage::RingFill { mut fill, .. } = completion(&mut direct).unwrap().pixels else {
+        panic!("the direct arm returns its ring loan");
+    };
+    let stop = AtomicBool::new(false);
+    let (wake, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
+    let mut copy =
+        RendererWorker::start_cpu_copy_reference_until_stopped(&stop, wake.as_fd()).unwrap();
+    copy.timeout = Duration::from_secs(30);
+    assert!(!copy.uses_ring_fill() && !copy.uses_dma_buf());
+    copy.submit(identity(), model(), 8, 48, 2.0).unwrap();
+    let RenderImage::Cpu(pixels) = completion(&mut copy).unwrap().pixels else {
+        panic!("the copy arm returns owned pixels");
+    };
+    assert_eq!((pixels.width(), pixels.height()), (8, 48));
+    assert_eq!(fill.pixels_mut().unwrap(), pixels.bytes());
+    producer.abort_owned_slot(&mut fill).unwrap();
+
+    let fill = producer.acquire_owned_slot(8 * 48 * 4, 4).unwrap();
+    let (error, mut fill) = copy
+        .submit_fill(identity(), model(), 8, 48, 2.0, fill)
+        .unwrap_err();
+    assert!(error.contains("copy reference does not fill"), "{error}");
+    let (offer, _) = producer
+        .commit_owned_slot(&mut fill, ring_upload(), 5)
+        .unwrap();
+    assert_eq!(offer, 1, "the refusal spent no offer ID");
 }

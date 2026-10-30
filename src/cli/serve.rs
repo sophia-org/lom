@@ -16,9 +16,45 @@ use std::os::fd::{AsFd, BorrowedFd};
 use std::sync::atomic::AtomicBool;
 use std::{path::Path, time::Duration};
 
-pub(super) fn run(dma: Option<bool>, renderer: Option<Renderer>) -> Result<(), String> {
-    run_with_renderer(dma, renderer, |epoch, dma, renderer, stop| {
-        start_renderer(epoch, dma, renderer, &stop.flag, stop.wake.as_fd())
+/// The binary that entered `--serve`; never inferred from argv[0] or the
+/// environment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Entry {
+    /// `lom --serve`: GPU or the production CPU direct fill.
+    Ordinary,
+    /// `lom-cpu-reference --serve`: only the Vello CPU direct and copy arms.
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    CpuReference,
+}
+
+#[cfg(feature = "diagnostic-cpu-reference")]
+pub(super) const REFUSE_GPU: &str = "lom-cpu-reference refuses the GPU renderer";
+
+impl Entry {
+    fn admit(self, renderer: Renderer) -> Result<(), String> {
+        let (allowed, refusal): (&[Renderer], &str) = match self {
+            Entry::Ordinary => (
+                &[Renderer::Gpu, Renderer::Cpu],
+                "the cpu-copy-reference renderer requires lom-cpu-reference",
+            ),
+            #[cfg(feature = "diagnostic-cpu-reference")]
+            Entry::CpuReference => (&[Renderer::Cpu, Renderer::CpuCopyReference], REFUSE_GPU),
+        };
+        if allowed.contains(&renderer) {
+            Ok(())
+        } else {
+            Err(refusal.into())
+        }
+    }
+}
+
+pub(super) fn run(
+    entry: Entry,
+    dma: Option<bool>,
+    renderer: Option<Renderer>,
+) -> Result<(), String> {
+    run_with_renderer(entry, dma, renderer, |epoch, dma, renderer, stop| {
+        start_renderer(entry, epoch, dma, renderer, &stop.flag, stop.wake.as_fd())
     })
 }
 
@@ -26,12 +62,18 @@ pub(super) fn run(dma: Option<bool>, renderer: Option<Renderer>) -> Result<(), S
 /// GPU; its record states the source-selected renderer, not admission: an
 /// inherited grant may exist but is not used.
 fn start_renderer(
+    entry: Entry,
     epoch: u64,
     dma: bool,
     renderer: Renderer,
     stop: &AtomicBool,
     wake: BorrowedFd<'_>,
 ) -> Result<RendererWorker, String> {
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    if entry == Entry::CpuReference {
+        return super::cpu_reference::start(renderer, stop, wake);
+    }
+    entry.admit(renderer)?;
     if renderer == Renderer::Cpu {
         let worker = RendererWorker::start_cpu_until_stopped(stop, wake)?;
         println!("lom_renderer schema=1 renderer=vello-cpu source=owned-ring-fill gpu=not-used");
@@ -44,27 +86,31 @@ fn start_renderer(
 }
 
 /// An explicit argument overrides the protected panel's setting. CPU never
-/// pairs with DMA-BUF, so that combination fails instead of falling back.
+/// pairs with DMA-BUF, so that combination fails instead of falling back. The
+/// entry's renderer refusal is also decided here, before any connection.
 fn resolve(
+    entry: Entry,
     dma: Option<bool>,
     renderer: Option<Renderer>,
     config: &PanelConfig,
 ) -> Result<(bool, Renderer), String> {
     let dma = dma.unwrap_or(config.dma_buf);
     let renderer = renderer.unwrap_or(config.renderer);
-    if renderer == Renderer::Cpu && dma {
+    if renderer != Renderer::Gpu && dma {
         return Err("the CPU renderer requires the owned-ring image source, not dma-buf".into());
     }
+    entry.admit(renderer)?;
     Ok((dma, renderer))
 }
 
 fn run_with_renderer<R: ContentRenderer>(
+    entry: Entry,
     dma: Option<bool>,
     renderer: Option<Renderer>,
     start: impl FnOnce(u64, bool, Renderer, &super::shutdown::Shutdown) -> Result<R, String>,
 ) -> Result<(), String> {
     let stop = super::shutdown::Shutdown::install()?;
-    let result = serve(&stop, dma, renderer, start);
+    let result = serve(&stop, entry, dma, renderer, start);
     if stop.requested() {
         // Dropping the connection revokes this owner's content and leaves any
         // ambiguous submission with its original owner; nothing is replayed.
@@ -77,6 +123,7 @@ fn run_with_renderer<R: ContentRenderer>(
 
 fn serve<R: ContentRenderer>(
     stop: &super::shutdown::Shutdown,
+    entry: Entry,
     dma: Option<bool>,
     renderer: Option<Renderer>,
     start: impl FnOnce(u64, bool, Renderer, &super::shutdown::Shutdown) -> Result<R, String>,
@@ -93,7 +140,7 @@ fn serve<R: ContentRenderer>(
     let (config, theme) = parse_shell_config(&source)
         .map_err(|error| format!("{}:{error}", Path::new(&config_path).display()))?;
     validate_theme(&config, &theme)?;
-    let (dma, renderer) = resolve(dma, renderer, &config)?;
+    let (dma, renderer) = resolve(entry, dma, renderer, &config)?;
     let allowance = std::env::var("SOPHIA_SHELL_BAR_THICKNESS")
         .map_err(|_| "SOPHIA_SHELL_BAR_THICKNESS is required for --serve")?
         .parse::<u32>()

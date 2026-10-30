@@ -198,6 +198,20 @@ fn protected_renderer_is_explicit_and_defaults_to_gpu() {
     }
 }
 
+/// The copy reference is a feature-only spelling; the default build refuses it.
+#[test]
+fn the_copy_reference_renderer_exists_only_with_its_feature() {
+    let source = include_str!("../examples/minimal/shell.kdl").replace(
+        "panel \"main\" {",
+        "panel \"main\" {\n renderer \"cpu-copy-reference\"",
+    );
+    let parsed = lom::config::parse_shell_config(&source).map(|c| c.0.renderer);
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    assert_eq!(parsed.unwrap(), lom::config::Renderer::CpuCopyReference);
+    #[cfg(not(feature = "diagnostic-cpu-reference"))]
+    assert!(format!("{:?}", parsed.unwrap_err()).contains("expected gpu or cpu"));
+}
+
 #[test]
 fn protected_image_source_is_explicit_and_defaults_to_the_owned_ring() {
     let source = include_str!("../examples/minimal/shell.kdl");

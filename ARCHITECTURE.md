@@ -364,6 +364,18 @@ timed out job keeps its storage and the service ends. Its startup record
 evidence. This removes the client-side copy into the slot only; native
 presentation, default adoption and performance are unqualified.
 
+The default-off `diagnostic-cpu-reference` feature builds a separate
+`lom-cpu-reference` binary that accepts exactly `--serve`. Its protected panel
+selects `renderer "cpu"` for the direct fill above or the feature-only
+`renderer "cpu-copy-reference"`, which renders the same retained scene with the
+same Vello CPU renderer into an owned image, applies the readback conversion and
+uses the existing slice upload. After arguments and the panel are merged, and
+before any connection, the ordinary binary refuses the copy reference, the
+diagnostic binary refuses GPU, and both refuse CPU with DMA-BUF. Its startup
+records add `diagnostic=cpu-reference`. The feature-on ordinary `check-config`
+still parses that panel; a default build refuses the spelling. The reference
+exists to compare the two CPU arms and is never a production mode or fallback.
+
 Deadlines initiate recovery; they never authorize reuse of storage still held
 by GPU or Engine consumers. Budget reservations and terminal-response capacity
 must precede accepting obligations. Bound known allocations and retain the

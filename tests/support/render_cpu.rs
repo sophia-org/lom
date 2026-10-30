@@ -21,6 +21,12 @@ fn assert_direct_equals_reference(mut scene: PreviewScene) -> Vec<u8> {
     let mut target = vec![0xa5; ContentPixels::byte_len(width, height).unwrap()];
     render_into(&mut VelloCpuRenderer::new(1, 1), &mut scene, &mut target).unwrap();
     assert_eq!(target, reference.bytes(), "{width}x{height}");
+    // The diagnostic copy arm is exactly this reference path.
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    {
+        let copy = super::render_copy(&mut VelloCpuRenderer::new(1, 1), &mut scene).unwrap();
+        assert_eq!(copy.bytes(), target, "copy {width}x{height}");
+    }
     straight
 }
 

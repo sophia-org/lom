@@ -233,3 +233,9 @@ render worker to drive its private mailbox with real SDK ring loans from a
 standalone `RingProducer`: refused submissions return the loan, a late queued
 fill is never received, and a failed render faults the ring before the
 completion wake. Neither opens a GPU or display.
+
+`tests/support/service_fill_snapshot.rs` is mounted privately from the ring-fill
+owner to mutate one owner snapshot field between completion and commit over a
+real SDK loan and ring peer. With the diagnostic feature, the same harness runs
+the crate-private direct and copy-reference CPU workers and compares the Offer
+bytes the peer reads, without a public constructor for the copy arm.

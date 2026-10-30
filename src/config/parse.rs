@@ -161,6 +161,8 @@ pub(crate) fn parse_panel(source: &str, node: &KdlNode) -> Result<PanelConfig, C
                 panel.renderer = match string(source, child)?.as_str() {
                     "gpu" => Renderer::Gpu,
                     "cpu" => Renderer::Cpu,
+                    #[cfg(feature = "diagnostic-cpu-reference")]
+                    "cpu-copy-reference" => Renderer::CpuCopyReference,
                     _ => return Err(error(source, child, "expected gpu or cpu")),
                 };
             }
