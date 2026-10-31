@@ -5,13 +5,15 @@ use sophia_image_producer::{RingProducer, RingProducerConfig};
 use sophia_shell_protocol::shell_files::{RingEvent, RingEventKind, RingIdentity};
 
 #[test]
-fn only_diagnostic_entries_hash_the_same_cpu_pixels() {
+fn each_entry_selects_its_checksum_policy_for_the_same_cpu_pixels() {
     let entries = [
         (Entry::Ordinary, false),
         #[cfg(feature = "diagnostic-cpu-reference")]
         (Entry::CpuReference, true),
         #[cfg(feature = "diagnostic-cpu-reference")]
         (Entry::CpuCadence, true),
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        (Entry::CpuCadenceNoChecksum, false),
     ];
     let mut baseline = None;
     for (entry, diagnostic) in entries {

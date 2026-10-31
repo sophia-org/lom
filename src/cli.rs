@@ -107,6 +107,16 @@ pub fn run_cpu_cadence(arguments: Vec<OsString>) -> Result<(), String> {
     serve::run(serve::Entry::CpuCadence, None, None)
 }
 
+/// Fixed diagnostic cadence with ordinary CPU direct fill and no checksum.
+/// Accepts exactly `--serve`; GPU and copy-reference selections are refused.
+#[cfg(feature = "diagnostic-cpu-reference")]
+pub fn run_cpu_cadence_no_checksum(arguments: Vec<OsString>) -> Result<(), String> {
+    if arguments.len() != 1 || arguments[0] != "--serve" {
+        return Err("lom-cpu-cadence-no-checksum accepts exactly --serve".into());
+    }
+    serve::run(serve::Entry::CpuCadenceNoChecksum, None, None)
+}
+
 fn options(arguments: &[OsString], allowed: &[&str]) -> Result<BTreeMap<String, OsString>, String> {
     if !arguments.len().is_multiple_of(2) {
         return Err("unsupported arguments: expected flag/value pairs".into());

@@ -517,7 +517,7 @@ fn lost_counters_and_extra_work_refuse_instead_of_sampling() {
 #[test]
 fn the_serve_owner_loop_enables_the_cadence_after_the_reporter() {
     assert!(std::env::var_os("SOPHIA_SHELL_WORK_STATS").is_none());
-    for cadence in [true, false] {
+    for cadence in [Some(true), Some(false), None] {
         let stop = Arc::new(AtomicBool::new(false));
         let (wake, service_wake) = UnixStream::pair().unwrap();
         let mut session = session_until_stopped(
@@ -536,13 +536,14 @@ fn the_serve_owner_loop_enables_the_cadence_after_the_reporter() {
         });
         let goal = |service: &ShellService<RendererWorker>| match &service.cadence {
             Some(cadence) => cadence.presented >= 3,
-            None => !cadence && service.panels[0].presented.is_some(),
+            None => cadence.is_none() && service.panels[0].presented.is_some(),
         };
         let driven = crate::cli::drive_for_tests(cadence, &mut session.service, goal);
-        finished.send(()).unwrap();
+        // The watchdog may already have timed out and closed the receiver.
+        let _ = finished.send(());
         watchdog.join().unwrap();
         driven.unwrap();
-        if cadence {
+        if cadence.is_some() {
             let state = session.cadence();
             assert_eq!((state.quota, state.presented), (QUOTA, 3));
             assert_eq!(session.stats().renders_started, 3);

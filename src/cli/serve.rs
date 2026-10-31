@@ -28,6 +28,9 @@ pub(super) enum Entry {
     /// `lom-cpu-cadence --serve`: the same arms, redirtied to a fixed quota.
     #[cfg(feature = "diagnostic-cpu-reference")]
     CpuCadence,
+    /// Fixed cadence using ordinary CPU direct fill without diagnostic hashing.
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    CpuCadenceNoChecksum,
 }
 
 #[cfg(feature = "diagnostic-cpu-reference")]
@@ -48,6 +51,11 @@ impl Entry {
             Entry::CpuCadence => (
                 &[Renderer::Cpu, Renderer::CpuCopyReference],
                 REFUSE_GPU_CADENCE,
+            ),
+            #[cfg(feature = "diagnostic-cpu-reference")]
+            Entry::CpuCadenceNoChecksum => (
+                &[Renderer::Cpu],
+                "lom-cpu-cadence-no-checksum requires the cpu renderer",
             ),
         };
         if allowed.contains(&renderer) {
@@ -79,6 +87,14 @@ fn start_renderer(
     stop: &AtomicBool,
     wake: BorrowedFd<'_>,
 ) -> Result<RendererWorker, String> {
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    if entry == Entry::CpuCadenceNoChecksum {
+        entry.admit(renderer)?;
+        let worker = RendererWorker::start_cpu_until_stopped(stop, wake, false)?;
+        println!("{}", super::cpu_reference::record(renderer)?);
+        println!("lom_checksum_policy schema=1 checksum=unavailable diagnostic=cpu-cadence");
+        return Ok(worker);
+    }
     #[cfg(feature = "diagnostic-cpu-reference")]
     if matches!(entry, Entry::CpuReference | Entry::CpuCadence) {
         entry.admit(renderer)?;
@@ -154,8 +170,16 @@ fn serve<R: ContentRenderer>(
     let (dma, renderer) = resolve(entry, dma, renderer, &config)?;
     // The cadence owns the work counters from zero; its samples replace them.
     #[cfg(feature = "diagnostic-cpu-reference")]
-    if entry == Entry::CpuCadence && std::env::var_os("SOPHIA_SHELL_WORK_STATS").is_some() {
-        return Err("lom-cpu-cadence refuses SOPHIA_SHELL_WORK_STATS".into());
+    if matches!(entry, Entry::CpuCadence | Entry::CpuCadenceNoChecksum)
+        && std::env::var_os("SOPHIA_SHELL_WORK_STATS").is_some()
+    {
+        return Err(match entry {
+            Entry::CpuCadenceNoChecksum => {
+                "lom-cpu-cadence-no-checksum refuses SOPHIA_SHELL_WORK_STATS"
+            }
+            _ => "lom-cpu-cadence refuses SOPHIA_SHELL_WORK_STATS",
+        }
+        .into());
     }
     let allowance = std::env::var("SOPHIA_SHELL_BAR_THICKNESS")
         .map_err(|_| "SOPHIA_SHELL_BAR_THICKNESS is required for --serve")?
@@ -226,7 +250,7 @@ fn drive<R: ContentRenderer>(
     #[cfg(not(feature = "diagnostic-cpu-reference"))]
     let _ = entry;
     #[cfg(feature = "diagnostic-cpu-reference")]
-    if entry == Entry::CpuCadence {
+    if matches!(entry, Entry::CpuCadence | Entry::CpuCadenceNoChecksum) {
         service.enable_diagnostic_cadence()?;
         println!("{}", super::cpu_reference::cadence_record());
     }
@@ -249,17 +273,17 @@ fn drive<R: ContentRenderer>(
 }
 
 /// The production owner loop for the service cadence tests, which own the
-/// socket peer; the diagnostic entry is `cadence` or the plain reference.
+/// socket peer; `Some` selects cadence with the requested checksum policy.
 #[cfg(all(test, feature = "diagnostic-cpu-reference"))]
 pub(crate) fn drive_for_tests<R: ContentRenderer>(
-    cadence: bool,
+    cadence: Option<bool>,
     service: &mut ShellService<R>,
     stop: impl Fn(&ShellService<R>) -> bool,
 ) -> Result<(), String> {
-    let entry = if cadence {
-        Entry::CpuCadence
-    } else {
-        Entry::CpuReference
+    let entry = match cadence {
+        Some(true) => Entry::CpuCadence,
+        Some(false) => Entry::CpuCadenceNoChecksum,
+        None => Entry::CpuReference,
     };
     drive(entry, service, stop)
 }
