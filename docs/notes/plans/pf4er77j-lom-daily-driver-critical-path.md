@@ -409,7 +409,8 @@ process set, but does not isolate Session cost or measure ordinary redraw cost.
 1. Attribute one redraw device-free at h24 and h512 with the signed `3fe206dc`
    scene and saved checksums: preparation, rasterization, conversion, checksum
    and the actual mapped-loan commit, worker and owner thread CPU separately.
-2. Choose one mechanism from that split: damage-region rendering only after
+2. Choose one mechanism from that split: checksum policy first if its pass
+   dominates; damage-region rendering only after
    t017 shows the existing tiles and placements can carry it with exact slot
    custody, or direct premultiplied-BGRA output if conversion is material.
 3. Device-free pixel and custody controls, then a fresh native comparison. A
@@ -417,6 +418,15 @@ process set, but does not isolate Session cost or measure ordinary redraw cost.
    has no real damage.
 
 Keep the default-off copy reference as the comparison baseline.
+
+Step 1 completed device-free on 2026-10-30 with signed harness `8c31f95`
+(production code unchanged). The [attribution report](../../redraw-attribution.md)
+records 120 warmups and 200 measured renders per size, exact saved checksum
+matches and real mapped loans. Mean worker CPU at h24/h512 was 156/2795 µs
+for checksum, 75/1324 for conversion, and 64/552 for raster plus RGBA output.
+Checksum is the first follow-up: trace its diagnostic consumers and preserve
+exact pixel qualification before proposing an ordinary-path policy change.
+This is not a native saving, a whole-process split or completion of t022.
 
 ## Connections
 
