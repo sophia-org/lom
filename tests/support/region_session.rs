@@ -32,8 +32,8 @@ static NEXT: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct Worker {
     real: RendererWorker,
     partial: bool,
-    pub(super) partial_completions: usize,
-    pub(super) fault_at: Option<usize>,
+    pub(in crate::service) partial_completions: usize,
+    pub(in crate::service) fault_at: Option<usize>,
 }
 
 impl ContentRenderer for Worker {
@@ -98,15 +98,15 @@ impl ContentRenderer for Worker {
 }
 
 #[derive(Debug)]
-pub(super) struct Frame {
-    pub(super) generation: u64,
-    pub(super) pixels: Vec<u8>,
-    pub(super) resources: Vec<(u64, u64)>,
-    pub(super) upload_bytes: usize,
-    pub(super) uploads: usize,
+pub(in crate::service) struct Frame {
+    pub(in crate::service) generation: u64,
+    pub(in crate::service) pixels: Vec<u8>,
+    pub(in crate::service) resources: Vec<(u64, u64)>,
+    pub(in crate::service) upload_bytes: usize,
+    pub(in crate::service) uploads: usize,
 }
 
-pub(super) enum Control {
+pub(in crate::service) enum Control {
     HoldSlots(bool),
     HoldResources(bool),
     Barrier(mpsc::Sender<()>),
@@ -117,9 +117,9 @@ pub(super) enum Control {
     Stop,
 }
 
-pub(super) struct Session {
-    pub(super) service: ShellService<Worker>,
-    pub(super) commands: mpsc::Sender<Control>,
+pub(in crate::service) struct Session {
+    pub(in crate::service) service: ShellService<Worker>,
+    pub(in crate::service) commands: mpsc::Sender<Control>,
     frames: mpsc::Receiver<Frame>,
     server: Option<std::thread::JoinHandle<()>>,
     path: PathBuf,
@@ -382,18 +382,18 @@ fn server(
 }
 
 impl Session {
-    pub(super) fn control(&self, command: Control) {
+    pub(in crate::service) fn control(&self, command: Control) {
         let (send, receive) = mpsc::channel();
         self.commands.send(command).unwrap();
         self.commands.send(Control::Barrier(send)).unwrap();
         receive.recv_timeout(Duration::from_secs(2)).unwrap();
     }
 
-    pub(super) fn new(height: u32) -> Self {
+    pub(in crate::service) fn new(height: u32) -> Self {
         Self::geometry(1920, height, Position::Top)
     }
 
-    pub(super) fn geometry(width: u32, height: u32, position: Position) -> Self {
+    pub(in crate::service) fn geometry(width: u32, height: u32, position: Position) -> Self {
         Self::with_renderer(
             width,
             height,
@@ -486,7 +486,7 @@ impl Session {
         }
     }
 
-    pub(super) fn set(&mut self, seconds: i64, active: u64) -> Model {
+    pub(in crate::service) fn set(&mut self, seconds: i64, active: u64) -> Model {
         let now = DateTime::<Utc>::UNIX_EPOCH.fixed_offset() + chrono::Duration::seconds(seconds);
         self.service.observed_clock = Some(now);
         let panel = &mut self.service.panels[0];
@@ -500,7 +500,7 @@ impl Session {
         panel.model.clone()
     }
 
-    pub(super) fn until(&mut self, ready: impl Fn(&ShellService<Worker>) -> bool) {
+    pub(in crate::service) fn until(&mut self, ready: impl Fn(&ShellService<Worker>) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while !ready(&self.service) {
             assert!(Instant::now() < deadline, "region service stalled");
@@ -509,7 +509,7 @@ impl Session {
         }
     }
 
-    pub(super) fn frame(&mut self, expected: &Model) -> Frame {
+    pub(in crate::service) fn frame(&mut self, expected: &Model) -> Frame {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             assert!(Instant::now() < deadline, "region presentation stalled");
@@ -553,7 +553,12 @@ pub(crate) fn region_record_session_for_tests(
     run(&mut session.service, |service| {
         service.panels[0].presented.is_some()
     });
-    let model = session.service.panels[0].model.clone();
+    let model = session.service.panels[0]
+        .presented
+        .as_ref()
+        .unwrap()
+        .model
+        .clone();
     let frame = session.received_frame(&model);
     assert_eq!(
         (frame.generation, frame.uploads, frame.upload_bytes),

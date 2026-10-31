@@ -178,7 +178,11 @@ impl<R: ContentRenderer> ShellService<R> {
 
     fn region_rendering(&self) -> bool {
         #[cfg(feature = "diagnostic-cpu-reference")]
-        if self.cadence.is_some() {
+        if self
+            .cadence
+            .as_ref()
+            .is_some_and(|c| c.alternating.is_none())
+        {
             return false;
         }
         self.renderer.supports_regions()
@@ -199,6 +203,12 @@ impl<R: ContentRenderer> ShellService<R> {
         let full_only = false;
         #[cfg(feature = "diagnostic-cpu-reference")]
         let full_only = self.sequence.as_ref().map_or(full_only, |s| s.full);
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        let full_only = self
+            .cadence
+            .as_ref()
+            .and_then(|c| c.alternating.as_ref())
+            .map_or(full_only, |a| a.full);
         let Some(plan) = panel.update_plan(self.region_rendering(), full_only) else {
             return Ok(None);
         };

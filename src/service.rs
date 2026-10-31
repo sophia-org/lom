@@ -616,7 +616,12 @@ impl<R: ContentRenderer> ShellService<R> {
 
     fn live_model_inputs(&self) -> bool {
         #[cfg(feature = "diagnostic-cpu-reference")]
-        if self.sequence.is_some() {
+        if self.sequence.is_some()
+            || self
+                .cadence
+                .as_ref()
+                .is_some_and(|c| c.alternating.is_some())
+        {
             return false;
         }
         true

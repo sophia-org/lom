@@ -128,6 +128,12 @@ It bypasses authentication/config resolution, which `region_cli.rs` checks
 separately, and stops after one Presented; the nine-phase control checks the
 complete sequence. No production inspection API or injected phase clock exists.
 
+The private cadence `service_alternating.rs` mount reuses that test-only socket
+peer to compare both directions of the two-fixture workload, establishment job
+counts, quota stopping, contamination refusals and live-feed isolation. The
+shared peer's visibility stays inside the service's tests; no production API is
+widened. Its small private quota uses the fixed driver, not a runtime option.
+
 Repository-tool tests live in `tools/tests/` and exercise the actual command or
 observable behavior. Gate regressions must prove both acceptance and rejection,
 especially at threshold boundaries; a helper-only assertion is not sufficient.

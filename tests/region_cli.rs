@@ -15,6 +15,8 @@ fn region_entries_accept_only_serve_and_the_fixed_configuration() {
     for binary in [
         env!("CARGO_BIN_EXE_lom-cpu-regions"),
         env!("CARGO_BIN_EXE_lom-cpu-regions-full"),
+        env!("CARGO_BIN_EXE_lom-cpu-region-cadence"),
+        env!("CARGO_BIN_EXE_lom-cpu-region-cadence-full"),
     ] {
         for args in [
             &[][..],

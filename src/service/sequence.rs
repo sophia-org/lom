@@ -93,6 +93,30 @@ impl<R: ContentRenderer> ShellService<R> {
         {
             return Err("region sequence requires a fresh single-panel CPU region owner".into());
         }
+        let models = self.fixture_models(&PHASES.map(|(_, source)| source))?;
+        self.statistics = Some(WorkStatistics::default());
+        self.sequence = Some(Sequence {
+            full,
+            next_at: None,
+            models,
+            phase: 0,
+            presented: 0,
+        });
+        println!(
+            "lom_region_sequence schema=1 source=fixture role={} phases={} hold_ms={}",
+            if full { "full" } else { "regions" },
+            PHASES.len(),
+            HOLD.as_millis()
+        );
+        self.install_sequence_phase()
+    }
+
+    /// Shared admission/remapping for fixture-owned diagnostics, not live feeds.
+    pub(super) fn fixture_models(&self, sources: &[&str]) -> Result<Vec<Model>, String> {
+        validate_config(&self.config)?;
+        if self.panels.len() != 1 {
+            return Err("fixture diagnostic requires one panel".into());
+        }
         let panel = &self.panels[0];
         if panel.allocation.pixel.width != 1920
             || panel.allocation.pixel.height != self.config.height
@@ -101,8 +125,8 @@ impl<R: ContentRenderer> ShellService<R> {
         {
             return Err("region sequence requires 1920-wide scale-one allocation".into());
         }
-        let mut models = Vec::with_capacity(PHASES.len());
-        for (_, source) in PHASES {
+        let mut models = Vec::with_capacity(sources.len());
+        for source in sources {
             let mut model =
                 crate::runtime::parse_fixture(source, self.config.clone(), self.theme.clone())
                     .map_err(|e| format!("region fixture: {e}"))?;
@@ -128,21 +152,7 @@ impl<R: ContentRenderer> ShellService<R> {
             }
             models.push(model);
         }
-        self.statistics = Some(WorkStatistics::default());
-        self.sequence = Some(Sequence {
-            full,
-            next_at: None,
-            models,
-            phase: 0,
-            presented: 0,
-        });
-        println!(
-            "lom_region_sequence schema=1 source=fixture role={} phases={} hold_ms={}",
-            if full { "full" } else { "regions" },
-            PHASES.len(),
-            HOLD.as_millis()
-        );
-        self.install_sequence_phase()
+        Ok(models)
     }
 
     fn install_sequence_phase(&mut self) -> Result<(), String> {

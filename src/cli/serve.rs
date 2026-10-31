@@ -35,6 +35,10 @@ pub(super) enum Entry {
     CpuRegions,
     #[cfg(feature = "diagnostic-cpu-reference")]
     CpuRegionsFull,
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    CpuRegionCadence,
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    CpuRegionCadenceFull,
 }
 
 #[cfg(feature = "diagnostic-cpu-reference")]
@@ -48,6 +52,15 @@ impl Entry {
         match self {
             Self::CpuRegions => Some(false),
             Self::CpuRegionsFull => Some(true),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    fn region_cadence(self) -> Option<bool> {
+        match self {
+            Self::CpuRegionCadence => Some(false),
+            Self::CpuRegionCadenceFull => Some(true),
             _ => None,
         }
     }
@@ -71,7 +84,10 @@ impl Entry {
                 "lom-cpu-cadence-no-checksum requires the cpu renderer",
             ),
             #[cfg(feature = "diagnostic-cpu-reference")]
-            Entry::CpuRegions | Entry::CpuRegionsFull => (
+            Entry::CpuRegions
+            | Entry::CpuRegionsFull
+            | Entry::CpuRegionCadence
+            | Entry::CpuRegionCadenceFull => (
                 &[Renderer::Cpu],
                 "region sequence requires the cpu renderer",
             ),
@@ -106,11 +122,16 @@ fn start_renderer(
     wake: BorrowedFd<'_>,
 ) -> Result<RendererWorker, String> {
     #[cfg(feature = "diagnostic-cpu-reference")]
-    if let Some(full) = entry.region_sequence() {
+    if let Some(full) = entry.region_sequence().or(entry.region_cadence()) {
         entry.admit(renderer)?;
+        let diagnostic = if entry.region_cadence().is_some() {
+            "cpu-region-cadence"
+        } else {
+            "cpu-region-sequence"
+        };
         let worker = RendererWorker::start_cpu_until_stopped(stop, wake, false)?;
         println!(
-            "lom_renderer schema=1 renderer=vello-cpu source=owned-ring-fill gpu=not-used diagnostic=cpu-region-sequence role={}",
+            "lom_renderer schema=1 renderer=vello-cpu source=owned-ring-fill gpu=not-used diagnostic={diagnostic} role={}",
             if full { "full" } else { "regions" }
         );
         return Ok(worker);
@@ -197,7 +218,7 @@ fn serve<R: ContentRenderer>(
     validate_theme(&config, &theme)?;
     let (dma, renderer) = resolve(entry, dma, renderer, &config)?;
     #[cfg(feature = "diagnostic-cpu-reference")]
-    if entry.region_sequence().is_some() {
+    if entry.region_sequence().is_some() || entry.region_cadence().is_some() {
         crate::service::sequence::validate_config(&config)?;
         if std::env::var_os("SOPHIA_SHELL_WORK_STATS").is_some() {
             return Err("region sequence refuses SOPHIA_SHELL_WORK_STATS".into());
@@ -292,6 +313,14 @@ fn drive<R: ContentRenderer>(
     #[cfg(feature = "diagnostic-cpu-reference")]
     if let Some(full) = entry.region_sequence() {
         service.enable_region_sequence(full)?;
+    }
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    if let Some(full) = entry.region_cadence() {
+        service.enable_region_cadence(full)?;
+        println!(
+            "lom_cadence schema=1 mode=alternate-after-presented quota={} diagnostic=cpu-region-cadence",
+            crate::service::CADENCE_QUOTA
+        );
     }
     let result = (|| {
         while !stop(service) {
