@@ -428,6 +428,21 @@ Checksum is the first follow-up: trace its diagnostic consumers and preserve
 exact pixel qualification before proposing an ordinary-path policy change.
 This is not a native saving, a whole-process split or completion of t022.
 
+On 2026-10-31, candidate branch `cpu/diagnostic-checksum` (`91e792d` source,
+`332ab39` report) makes ordinary CPU hashing optional while the explicit
+diagnostic entries retain exact hashes. It passed 245 Rust tests, both Clippy
+configurations, pixel/custody controls and deliberate entry-policy mutations.
+One offscreen hash-on/off/off/on sequence measured mean render-call CPU of
+302 → 161 µs at h24 and 4811 → 1924 µs at h512; block variation is retained
+in the [candidate report](https://github.com/sophia-org/lom/blob/cpu/diagnostic-checksum/docs/redraw-attribution.md).
+Receipt: `~/.local/state/lom-cpu-diagnostic-checksum-01/RECEIPT.json`, SHA256
+`a557db4f70093591fe3bea9ad8595244a6173c49e5fa645ec5b850635703d68b`.
+This is unmerged runtime work, with no native gain or adoption claim. Ordinary
+CPU logs would become schema 2 with `checksum=unavailable`; diagnostics keep
+schema 1. The existing hashed cadence cannot qualify the change unchanged:
+the next native design must separate pixel qualification from measuring the
+no-hash path and state the observability difference. t022 remains open.
+
 ## Connections
 
 [Architecture](../../../ARCHITECTURE.md), the
