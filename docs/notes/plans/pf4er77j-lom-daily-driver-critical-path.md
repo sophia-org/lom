@@ -348,7 +348,8 @@ overlap accounting, synchronization, cross-device behavior and final release.
 No zero-copy claim follows from an imported handle.
 
 t017 first measures reuse of the existing immutable resource/placement tables
-for static panels and small clock updates. Tiles already exist in the content
+for static panels and small clock updates. It is promoted to the critical path
+with t022 on 2026-10-30, as its changed-region gate. Tiles already exist in the content
 contract; Lom's current full-panel submission does not exploit them. A new delta
 contract, if needed, must name its base and pass a separate design gate.
 t018 broad ironbar parity remains deferred to a user-prioritized compatibility
@@ -362,6 +363,39 @@ adapters, bounded job identity/queues, enforceable allocation ownership,
 failure/restart behavior and a second independent implementation. A helper
 executing opaque jobs is not a hard GPU quota. No new kernel, Vello requirement
 in Sophia, private display or mandatory shell API is implied by this task.
+
+### t022
+
+Mason restored CPU redraw cost to the near-term critical path on 2026-10-30,
+after direct fill landed. Sophia's
+[continuous-frame CPU plan](https://github.com/sophia-org/sophia/blob/master/docs/notes/plans/4rifczhw-reduce-continuous-frame-cpu-without-weakening-custody.md)
+owns the order and gates; this section records Lom's share.
+
+Lom already skips unchanged frames (`same_panel_pixels`, raster reuse), but
+every render is full-surface: `src/render/cpu.rs` rasterizes all width×height
+pixels, converts the whole frame to premultiplied BGRA, and
+`src/render/worker.rs` checksums it in a further pass. The diagnostic cadence
+driver redirties after every presentation; its accounting is per reported
+scanout-start interval, not causal CPU per render job:
+Session+Lom+Hagia about 1600 µs per interval at 1920×24 (Lom 670–725) and about
+7900 at 1920×512 (Lom 5830–6330). Direct fill against the copy reference moved
+the h512 combined bound by −285 to −185 µs, and h24 stayed inconclusive. In
+ordinary clock use the production smoke measured Lom at 0.500–1.167 ms/s
+against a combined 9.833–11.833 ms/s. That combined row includes Session,
+Provlita and Hagia as well as Lom; it motivates investigating the rest of the
+process set, but does not isolate Session cost or measure ordinary redraw cost.
+
+1. Attribute one redraw device-free at h24 and h512 with the signed `3fe206dc`
+   scene and saved checksums: preparation, rasterization, conversion, checksum
+   and the actual mapped-loan commit, worker and owner thread CPU separately.
+2. Choose one mechanism from that split: damage-region rendering only after
+   t017 shows the existing tiles and placements can carry it with exact slot
+   custody, or direct premultiplied-BGRA output if conversion is material.
+3. Device-free pixel and custody controls, then a fresh native comparison. A
+   damage candidate also needs a changing-region workload; the cadence scene
+   has no real damage.
+
+Keep the default-off copy reference as the comparison baseline.
 
 ## Connections
 
