@@ -385,3 +385,83 @@ fn measure_checksum_policy() {
         );
     }
 }
+
+// The parent revision's conversion, retained only as a measurement reference.
+fn scalar_conversion(bytes: &mut [u8]) {
+    for pixel in bytes.chunks_exact_mut(4) {
+        let alpha = u16::from(pixel[3]);
+        let premultiply = |channel: u8| ((u16::from(channel) * alpha + 127) / 255) as u8;
+        let red = premultiply(pixel[0]);
+        pixel[0] = premultiply(pixel[2]);
+        pixel[1] = premultiply(pixel[1]);
+        pixel[2] = red;
+    }
+}
+
+#[test]
+#[ignore = "offscreen conversion; run explicitly in release with no concurrent builds"]
+fn measure_opaque_conversion() {
+    if cfg!(debug_assertions) {
+        panic!("measurement requires --release");
+    }
+    let mut rows = Vec::new();
+    for height in [24, 512] {
+        let mut hosts = RetainedHosts::default();
+        let (mut scene, _) = hosts
+            .scene(RenderJob {
+                identity: identity(),
+                fill: None,
+                model: model_for(height),
+                width: WIDTH,
+                height,
+                scale: 1.0,
+            })
+            .unwrap();
+        let straight = VelloCpuRenderer::new(1, 1)
+            .render_source(&mut scene.scene, WIDTH, height)
+            .unwrap()
+            .data;
+        assert!(straight.chunks_exact(4).all(|pixel| pixel[3] == 255));
+        let mut expected = straight.clone();
+        scalar_conversion(&mut expected);
+        assert_eq!(
+            crate::service::pixel_checksum(&expected),
+            expected_checksum(height)
+        );
+        for pattern in ["opaque", "alternating"] {
+            let mut input = straight.clone();
+            if pattern == "alternating" {
+                for pixel in input.chunks_exact_mut(4).step_by(2) {
+                    pixel[3] = 128;
+                }
+            }
+            let mut expected = input.clone();
+            scalar_conversion(&mut expected);
+            for (block, optimized) in [false, true, true, false].into_iter().enumerate() {
+                let convert: fn(&mut [u8]) = if optimized {
+                    crate::protocol::rgba8_to_premultiplied_bgra
+                } else {
+                    scalar_conversion
+                };
+                let mut ring = ready_ring_for(height);
+                for index in 0..320 {
+                    let mut fill = ring.acquire_owned_slot(input.len(), 3 + index).unwrap();
+                    let pixels = fill.pixels_mut().unwrap();
+                    pixels.copy_from_slice(&input);
+                    let (_, span) = measure(|| black_box(convert)(black_box(pixels)));
+                    assert_eq!(pixels, expected);
+                    ring.abort_owned_slot(&mut fill).unwrap();
+                    if index >= 120 {
+                        rows.push((height, pattern, block, optimized, index - 120, span));
+                    }
+                }
+            }
+        }
+    }
+    for (height, pattern, block, optimized, index, span) in rows {
+        println!(
+            "lom_conversion schema=1 height={height} pattern={pattern} block={block} optimized={optimized} index={index} cpu_ns={} wall_ns={}",
+            span.cpu_ns, span.wall_ns
+        );
+    }
+}

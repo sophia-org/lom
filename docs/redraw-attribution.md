@@ -233,3 +233,35 @@ source review must bind the new entry and the original checksum-policy change;
 package review must bind schema selection, capture equality, refused controls,
 artifact identities and the CPUwin baseline. Mason then runs the attended
 launcher after inventory, validation, seal and check-only complete.
+
+## Opaque conversion candidate
+
+After checksum elision qualified and merged as `71a3c20`, conversion remains
+a separate full-surface pass. For pixels whose actual alpha is 255,
+premultiplication is the identity: the candidate swaps red and blue directly.
+All other alpha values keep the original integer rounding and canonical
+transparent black. This is per-pixel selection, not an opaque-theme promise.
+The shared conversion also serves copy-reference and GPU readback; no render,
+ring lifetime, upload, checksum policy or log schema changes.
+
+The exhaustive control compares every channel/alpha pair against the wire
+rounding rule. Existing real-scene, translucent-scene and mapped-loan controls
+still apply. The ignored `measure_opaque_conversion` test compares the parent
+scalar loop with the production candidate in fixed baseline/candidate/
+candidate/baseline order at h24 and h512, 120 warmups and 200 measured calls
+per block. Both receive the same real rendered straight-RGBA scene in an SDK
+mapped loan. Input restoration, byte validation and loan abort are outside
+the conversion interval. Function dispatch and clock overhead remain included;
+logging occurs after all blocks. It measures calling-thread CPU and elapsed
+time, not asynchronous-worker, commit, Session or native cost.
+Each height also runs a descriptive synthetic control made from the same
+straight-RGBA bytes with alternating alpha 128/255; it is not a rendered
+translucent workload or a bound on every alpha pattern.
+
+Native qualification must keep checksum policy identical across performance
+arms: the held checksum-off cadence binary is the baseline, and the candidate
+checksum-off cadence binary is the other arm. First qualify the candidate's
+ordinary/reference opaque strips at both heights against the authenticated
+saved static strips, with exact model/configuration joins. GPU readback is
+covered offline for byte semantics, not by a new GPU native performance claim.
+No native benefit or promotion follows from the offscreen comparison.
