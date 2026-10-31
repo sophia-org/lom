@@ -35,6 +35,34 @@ the case and reports differences at aligned origins too. No tolerance is used
 to admit it. Transparent targets and unproven rendering cases must retain the
 full-frame path; these fixtures are not a proof for all opaque scenes or effects.
 
+## Semantic change classification
+
+`modules::panel_changes` now supplies the existing whole-panel reuse predicate.
+It distinguishes unchanged pixels, changed start/center/end groups, and full
+invalidation. The boolean reuse result is unchanged; every changed result still
+uses the full-frame renderer. No partial rendering or resource retention is
+enabled by this classifier.
+
+Fixed clipping portals contain each group's logical content. The numeric-clock
+and unchanged-workspace-label restrictions are additional conservative policy,
+not a layout proof: font fallback can change glyph advances. Sub-group geometry
+and target reuse must use actual resolved layout. New model fields and module
+kinds require an explicit review through exhaustive matching.
+
+The classifier's pixel control renders 1920-wide horizontal panels at scale 1,
+at heights 24 and 512. It compares full frames and requires the actual changed
+groups to equal the prediction. This is a test-only oracle, not production
+admission. Fractional thirds, fractional scale and vertical bars remain geometry
+work: account for seam pixels with outward bounds and test those cases before
+activation. The earlier crop tests above do not prove a change predictor for
+those geometries.
+
+Compare directly against the model of the raster or resident tile set referenced
+by the next candidate. The current reuse path references Presented; a future
+ledger could reference an in-flight resident set. Do not accumulate masks from
+intermediate observations: a full-invalidating change that is reverted can be
+unchanged relative to the referenced model.
+
 ## Raster screen
 
 Run explicitly with:
@@ -118,5 +146,6 @@ admission decision.
 
 The native gate needs a changing clock/workspace workload with byte qualification
 and placement-cost measurement. Static cadence redirties identical content and
-cannot qualify damage savings. No production code, release artifact or native
-package is changed by this proof.
+cannot qualify damage savings. The initial proof changed no production code;
+the classifier now changes only how the existing boolean reuse decision is
+computed. No release artifact or native package is changed here.
