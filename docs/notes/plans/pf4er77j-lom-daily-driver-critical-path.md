@@ -352,6 +352,27 @@ for static panels and small clock updates. It is promoted to the critical path
 with t022 on 2026-10-30, as its changed-region gate. Tiles already exist in the content
 contract; Lom's current full-panel submission does not exploit them. A new delta
 contract, if needed, must name its base and pass a separate design gate.
+
+The 2026-10-30 read-only t017 trace (Lom `3fe206dc`, SDK `99b05e34`,
+Sophia `647fc6f85`) confirms that a changed region can be a new immutable
+resource beside retained placements. The contract permits 32 placements and
+8 surfaces; each placement names a resource and destination offset. Session's
+`metadata_shell/content/projection.rs` retains each resource lease and checks
+its bounds. Lom already re-places a resident resource without upload for
+interaction-only changes (`src/service/presentation.rs`). A tiled bar does not
+require Sophia t335's proposed writes into a retained resource.
+
+Keep staging custody separate from resident lifetime. SDK ring admission has
+at most four staging slots, but that is not a two-slots-per-tile limit. Host
+`shell_transport/owned_copy.rs::publish_releases` releases the staging slot
+after its exact finished source read and ordered status publication; candidate
+placement leases retain the accepted resource independently. A tile design
+must budget staging slots, live resources and resident/retiring bytes separately.
+It must still prove stale-tile and alternating-slot correctness, full-frame
+pixel equivalence at antialiased tile edges, placement order/alpha, and the
+Session cost of more placements. Resource id/generation keys the texture
+handle; whether unchanged handles avoid CPU/GPU re-import remains unverified.
+
 t018 broad ironbar parity remains deferred to a user-prioritized compatibility
 list after daily-driver acceptance.
 
