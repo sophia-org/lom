@@ -233,3 +233,78 @@ source review must bind the new entry and the original checksum-policy change;
 package review must bind schema selection, capture equality, refused controls,
 artifact identities and the CPUwin baseline. Mason then runs the attended
 launcher after inventory, validation, seal and check-only complete.
+
+## Opaque conversion candidate
+
+After checksum elision qualified and merged as `71a3c20`, conversion remains
+a separate full-surface pass. For pixels whose actual alpha is 255,
+premultiplication is the identity: the candidate swaps red and blue directly.
+All other alpha values keep the original integer rounding and canonical
+transparent black. This is per-pixel selection, not an opaque-theme promise.
+The shared conversion also serves copy-reference and GPU readback; no render,
+ring lifetime, upload, checksum policy or log schema changes.
+
+The exhaustive control compares every channel/alpha pair against the wire
+rounding rule. Existing real-scene, translucent-scene and mapped-loan controls
+still apply. The ignored `measure_opaque_conversion` test compares the parent
+scalar loop with the production candidate in fixed baseline/candidate/
+candidate/baseline order at h24 and h512, 120 warmups and 200 measured calls
+per block. Both receive the same real rendered straight-RGBA scene in an SDK
+mapped loan. Input restoration, byte validation and loan abort are outside
+the conversion interval. Function dispatch and clock overhead remain included;
+logging occurs after all blocks. It measures calling-thread CPU and elapsed
+time, not asynchronous-worker, commit, Session or native cost.
+Each height also runs a descriptive synthetic control made from the same
+straight-RGBA bytes with alternating alpha 128/255; it is not a rendered
+translucent workload or a bound on every alpha pattern.
+
+Native qualification must keep checksum policy identical across performance
+arms: the held checksum-off cadence binary is the baseline, and the candidate
+checksum-off cadence binary is the other arm. First qualify the candidate's
+ordinary/reference opaque strips at both heights against the authenticated
+saved static strips, with exact model/configuration joins. GPU readback is
+covered offline for byte semantics, not by a new GPU native performance claim.
+No native benefit or promotion follows from the offscreen comparison.
+
+## Native opaque-conversion result, 2026-10-31
+
+Signed candidate `6ecf79e` passed the separate static pixel and CPU gates.
+The static package `lom-cpu-opaque-pixels-native-01` captured the new ordinary
+and reference entries at h24 and h512. Their opaque top strips match each
+other and the authenticated prior strip SHA256s. Reference FNV values remain
+`a7bbb8c840a7303c` and `9a603a023eb2ab7c`; ordinary producer checksums remain
+unavailable. The cadence executables were not captured: their conversion
+coverage comes from the common signed source and the ordinary/reference gate.
+
+`lom-cpu-opaque-native-02` compared held baseline `7e74dd7` with candidate
+`6ecf79e`, both using the checksum-off cadence entry. Each height used fixed
+baseline/candidate/candidate/baseline order, with 120 warmup presentations and
+2000 reported DRM scanout-start intervals. The same boot, Session, Hagia,
+sampler, configurations and model inputs were retained. Bounds sum the three
+processes and use equal-weight means of two runs per role:
+
+| Size | Baseline CPU (µs/interval) | Candidate CPU (µs/interval) | Candidate minus baseline |
+|---|---:|---:|---:|
+| 1920×24 | 1412.5–1462.5 | 1330–1380 | −132.5..−32.5 |
+| 1920×512 | 4442.5–4495 | 3270–3320 | −1225..−1122.5 |
+
+Both differences exclude zero in the beneficial direction. All eight runs
+had zero descriptive missed refreshes, complete candidate/kernel joins and
+clean process/VT cleanup. Independent raw-sample arithmetic and an external
+pinned-analyzer replay reproduce the saved bounds. These are accounting
+bounds for instrumented release executables, not confidence intervals,
+isolated conversion cost, exact render-job costs or production savings.
+Per-run Lom rows decreased while Session rows overlap; no per-process
+difference interval is claimed. Code layout and shared instrumentation remain
+part of the comparison. GPU and translucent native performance were not tested.
+
+Sealed CPU01 refused an inherited on/off launcher order during check-only,
+before any subprocess, marker or native run. Fresh CPU02 corrected that order
+and added a regression using the real generated package. No failed native
+arm was replaced. Saved packages, sources and release pools remain held.
+
+Qualification: `~/.local/state/lom-cpu-opaque-qualification-01/RECEIPT.json`,
+SHA256 `cfc1a12cda29dbbb777b167a662582dc57b46502675f4a0805db95b9a68004d7`.
+It binds the release, both pixel audits and both CPU audits; their snapshots
+show no writes to the spent packages. This closes the opaque-conversion
+candidate's gate, not t022's broader CPU-redraw work.

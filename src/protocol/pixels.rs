@@ -95,6 +95,11 @@ impl ContentPixels {
 /// readback pixels and CPU fills written directly into an owned ring slot.
 pub(crate) fn rgba8_to_premultiplied_bgra(bytes: &mut [u8]) {
     for pixel in bytes.chunks_exact_mut(4) {
+        // Premultiplication is the identity for an opaque pixel.
+        if pixel[3] == 255 {
+            pixel.swap(0, 2);
+            continue;
+        }
         let alpha = u16::from(pixel[3]);
         let premultiply = |channel: u8| ((u16::from(channel) * alpha + 127) / 255) as u8;
         let red = premultiply(pixel[0]);
@@ -103,6 +108,10 @@ pub(crate) fn rgba8_to_premultiplied_bgra(bytes: &mut [u8]) {
         pixel[2] = red;
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/support/pixel_conversion.rs"]
+mod tests;
 
 impl<'a> Iterator for PixelChunks<'a> {
     type Item = PixelChunk<'a>;

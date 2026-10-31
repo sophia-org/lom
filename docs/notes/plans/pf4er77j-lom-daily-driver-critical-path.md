@@ -394,8 +394,10 @@ owns the order and gates; this section records Lom's share.
 
 Lom already skips unchanged frames (`same_panel_pixels`, raster reuse), but
 every render is full-surface: `src/render/cpu.rs` rasterizes all width×height
-pixels, converts the whole frame to premultiplied BGRA, and
-`src/render/worker.rs` checksums it in a further pass. The diagnostic cadence
+pixels and converts the whole frame to premultiplied BGRA. At the original
+attribution checkpoint, `src/render/worker.rs` also checksummed every frame;
+the qualified changes below remove that ordinary-path pass and simplify
+opaque conversion. The diagnostic cadence
 driver redirties after every presentation; its accounting is per reported
 scanout-start interval, not causal CPU per render job:
 Session+Lom+Hagia about 1600 µs per interval at 1920×24 (Lom 670–725) and about
@@ -459,6 +461,29 @@ the ordinary-entry static gate and shared signed source. Qualification receipt:
 Ordinary CPU candidates now use schema 2 with `checksum=unavailable`;
 diagnostic entries retain schema 1 hashes. Conversion remains unchanged,
 and t022 remains open for further per-redraw work.
+
+The separate opaque-conversion candidate `6ecf79e` then passed both native
+gates and independent audits. Every actual alpha-255 pixel takes an exact
+red/blue swap; all other alphas retain the existing premultiply rounding.
+The new ordinary/reference static strips at h24 and h512 match the prior
+authenticated captures. Both performance arms use checksum-off cadence,
+baseline `7e74dd7` versus candidate `6ecf79e`, in fixed B/C/C/B order per size.
+Candidate-minus-baseline bounds are −132.5..−32.5 µs at h24 and
+−1225..−1122.5 µs at h512 per reported scanout-start interval, with zero
+missed refreshes in all eight runs and clean cleanup. No production saving,
+isolated conversion cost or cadence-entry capture is claimed. The
+[full result](../../redraw-attribution.md#native-opaque-conversion-result-2026-10-31)
+preserves means, limits and the pre-native CPU01 launcher refusal.
+Qualification receipt: `~/.local/state/lom-cpu-opaque-qualification-01/RECEIPT.json`,
+SHA256 `cfc1a12cda29dbbb777b167a662582dc57b46502675f4a0805db95b9a68004d7`.
+
+The next investigation follows the paired plan's Session marginal-cost step:
+rank existing Phase 0 repeated work and require a distinct mechanism with a
+predicted counter change. S1 regressed and stays parked. t017 remains the
+gate before changing-region rendering: exact retained-placement custody,
+tile-edge pixel equivalence and placement cost still need proof. Neither
+the static cadence workload nor these two qualified pass reductions close
+t022 or qualify a damage mechanism.
 
 ## Connections
 
