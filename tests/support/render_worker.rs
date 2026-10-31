@@ -317,7 +317,7 @@ fn a_real_cpu_worker_fills_the_owned_loan_with_the_same_renderer_bytes() {
         .unwrap();
     let reference = crate::protocol::ContentPixels::from_rgba8(8, 48, image.data).unwrap();
     assert_eq!(fill.pixels_mut().unwrap(), reference.bytes());
-    assert_eq!(checksum, crate::service::pixel_checksum(reference.bytes()));
+    assert_eq!(checksum, None, "ordinary CPU jobs do not hash pixels");
     let (offer, _) = producer
         .commit_owned_slot(&mut fill, ring_upload(), 4)
         .unwrap();
@@ -367,7 +367,7 @@ fn a_late_queued_cpu_fill_is_refused_and_faults_only_when_quarantine_ends() {
                 identity: identity(),
                 width: 8,
                 height: 48,
-                checksum: 0,
+                checksum: Some(0),
             },
             targets: Vec::new(),
         }))

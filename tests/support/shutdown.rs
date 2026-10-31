@@ -11,6 +11,8 @@ use std::{
 };
 
 use crate::service::tests::{files_peer, files_wire};
+#[path = "checksum_entry.rs"]
+mod checksum_entry;
 const GRANT: ContentGrant = ContentGrant {
     connection_epoch: files_wire::EPOCH,
     content_grant_epoch: 9,
@@ -384,7 +386,10 @@ fn the_cpu_renderer_starts_without_the_grant_the_gpu_renderer_requires() {
 #[test]
 fn each_entry_admits_only_its_resolved_renderers() {
     use crate::config::Renderer::{Cpu, CpuCopyReference as Copy, Gpu};
-    use Entry::{CpuCadence as Cadence, CpuReference as Reference, Ordinary};
+    use Entry::{
+        CpuCadence as Cadence, CpuCadenceNoChecksum as NoChecksum, CpuReference as Reference,
+        Ordinary,
+    };
     let ordinary = "the cpu-copy-reference renderer requires lom-cpu-reference";
     let dma = "requires the owned-ring image source";
     let (mut config, _) =
@@ -412,6 +417,31 @@ fn each_entry_admits_only_its_resolved_renderers() {
         (Cadence, Gpu, false, Some(Copy), Ok(Copy)),
         (Cadence, Cpu, true, None, Err(dma)),
         (Cadence, Copy, true, None, Err(dma)),
+        (NoChecksum, Cpu, false, None, Ok(Cpu)),
+        (NoChecksum, Gpu, false, Some(Cpu), Ok(Cpu)),
+        (NoChecksum, Copy, false, Some(Cpu), Ok(Cpu)),
+        (
+            NoChecksum,
+            Gpu,
+            false,
+            None,
+            Err("requires the cpu renderer"),
+        ),
+        (
+            NoChecksum,
+            Copy,
+            false,
+            None,
+            Err("requires the cpu renderer"),
+        ),
+        (
+            NoChecksum,
+            Cpu,
+            false,
+            Some(Copy),
+            Err("requires the cpu renderer"),
+        ),
+        (NoChecksum, Cpu, true, None, Err(dma)),
     ] {
         (config.renderer, config.dma_buf) = (panel, panel_dma);
         let resolved = resolve(entry, None, renderer, &config);
@@ -457,6 +487,8 @@ fn the_diagnostic_entry_starts_both_cpu_arms_with_exact_records() {
     for (entry, renderer) in [
         (Entry::CpuReference, Gpu),
         (Entry::CpuCadence, Gpu),
+        (Entry::CpuCadenceNoChecksum, Gpu),
+        (Entry::CpuCadenceNoChecksum, CpuCopyReference),
         (Entry::Ordinary, CpuCopyReference),
     ] {
         assert!(start(entry, renderer).is_err(), "{entry:?} {renderer:?}");

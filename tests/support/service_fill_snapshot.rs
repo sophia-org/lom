@@ -73,7 +73,7 @@ impl ContentRenderer for Lender {
                 identity,
                 width,
                 height,
-                checksum: 0,
+                checksum: Some(0),
             },
             targets: Vec::new(),
         }))
@@ -389,7 +389,7 @@ fn the_real_copy_reference_worker_offers_the_direct_fill_peer_bytes() {
     }
     let stop = std::sync::atomic::AtomicBool::new(false);
     let (wake, _peer) = std::os::unix::net::UnixStream::pair().unwrap();
-    let direct = RendererWorker::start_cpu_until_stopped(&stop, wake.as_fd()).unwrap();
+    let direct = RendererWorker::start_cpu_until_stopped(&stop, wake.as_fd(), true).unwrap();
     assert!(direct.uses_ring_fill());
     let direct = offered(direct);
     let copy = RendererWorker::start_cpu_copy_reference_until_stopped(&stop, wake.as_fd()).unwrap();

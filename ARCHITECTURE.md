@@ -275,8 +275,8 @@ producer-completed LINEAR (modifier 0) XRGB8888 DMA-BUFs after a fenced release
 to `VK_QUEUE_FAMILY_FOREIGN_EXT`. Lom retains each frame until the SDK observes
 Accepted and SourceReleased(CaptureComplete); it performs no CPU readback in
 this mode. The first phase supports opaque content and one output/device.
-Candidate diagnostics use schema 2 and `checksum=unavailable` for DMA frames;
-the CPU path preserves schema 1 and its pixel checksum. Render-node export and
+Candidate diagnostics use schema 2 and `checksum=unavailable` for DMA frames
+and ordinary CPU ring fills; checksum-enabled paths use schema 1. Render-node export and
 Vulkan-to-EGL pixel controls have passed; full Session presentation and matched
 performance qualification remain open.
 
@@ -375,6 +375,25 @@ diagnostic binary refuses GPU, and both refuse CPU with DMA-BUF. Its startup
 records add `diagnostic=cpu-reference`. The feature-on ordinary `check-config`
 still parses that panel; a default build refuses the spelling. The reference
 exists to compare the two CPU arms and is never a production mode or fallback.
+
+Pixel FNV64 is diagnostic evidence, not content admission or release evidence.
+Ordinary CPU ring fills omit the checksum pass and report
+`lom_panel_candidate schema=2 ... checksum=unavailable`; `RingFill.checksum`
+is `None`. The reference and original cadence entries explicitly request the full converted-byte
+hash, preserving schema 1 and the exact existing FNV64 values. Enabling the
+feature alone does not enable hashes in ordinary `lom`. No environment or
+config switch selects this policy. GPU readback and DMA behavior are unchanged.
+
+For a matched checksum-policy measurement, the same feature also builds
+`lom-cpu-cadence-no-checksum`. This entry accepts exactly `--serve` and only
+the protected `renderer "cpu"`; GPU, copy-reference, DMA-BUF and any
+`SOPHIA_SHELL_WORK_STATS` are refused before connecting. It uses the ordinary
+CPU worker policy, the direct diagnostic renderer record, and adds exactly
+`lom_checksum_policy schema=1 checksum=unavailable diagnostic=cpu-cadence`.
+It runs the same cadence loop, quota, counters and timing writer below, with
+schema-2 candidates. It provides no producer checksum or per-frame pixel
+equality evidence. Pixel qualification and native CPU qualification are
+separate gates described in [redraw attribution](docs/redraw-attribution.md).
 
 The same feature builds `lom-cpu-cadence`, which also accepts exactly
 `--serve`. It admits and refuses renderers as `lom-cpu-reference` does, starts

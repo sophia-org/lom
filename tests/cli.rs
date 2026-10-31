@@ -312,6 +312,7 @@ fn the_diagnostic_binaries_accept_exactly_serve() {
     for (binary, refusal, arguments) in [
         (REFERENCE, "lom-cpu-reference"),
         (CADENCE, "lom-cpu-cadence"),
+        (NO_CHECKSUM, "lom-cpu-cadence-no-checksum"),
     ]
     .into_iter()
     .flat_map(|(binary, name)| {
@@ -356,6 +357,12 @@ const CADENCE_GPU_REFUSAL: &str = "lom-cpu-cadence refuses the GPU renderer";
 #[cfg(feature = "diagnostic-cpu-reference")]
 const WORK_STATS_REFUSAL: &str = "lom-cpu-cadence refuses SOPHIA_SHELL_WORK_STATS";
 #[cfg(feature = "diagnostic-cpu-reference")]
+const NO_CHECKSUM: &str = env!("CARGO_BIN_EXE_lom-cpu-cadence-no-checksum");
+#[cfg(feature = "diagnostic-cpu-reference")]
+const DIRECT_ONLY: &str = "lom-cpu-cadence-no-checksum requires the cpu renderer";
+#[cfg(feature = "diagnostic-cpu-reference")]
+const NO_CHECKSUM_STATS: &str = "lom-cpu-cadence-no-checksum refuses SOPHIA_SHELL_WORK_STATS";
+#[cfg(feature = "diagnostic-cpu-reference")]
 const DMA_REFUSAL: &str = "the CPU renderer requires the owned-ring image source";
 #[cfg(feature = "diagnostic-cpu-reference")]
 const COPY: &str = "renderer \"cpu-copy-reference\"";
@@ -386,6 +393,11 @@ fn entry_selection_is_refused_before_the_allowance() {
         (CADENCE, COPY, &[], passed),
         (CADENCE, cpu_dma, &[], DMA_REFUSAL),
         (CADENCE, copy_dma, &[], DMA_REFUSAL),
+        (NO_CHECKSUM, "", &[], DIRECT_ONLY),
+        (NO_CHECKSUM, "renderer \"gpu\"", &[], DIRECT_ONLY),
+        (NO_CHECKSUM, COPY, &[], DIRECT_ONLY),
+        (NO_CHECKSUM, "renderer \"cpu\"", &[], passed),
+        (NO_CHECKSUM, cpu_dma, &[], DMA_REFUSAL),
     ] {
         let result = serve_binary_with_panel(binary, settings, arguments);
         let stderr = String::from_utf8(result.stderr).unwrap();
@@ -445,6 +457,10 @@ fn a_refused_entry_selection_never_connects() {
         (CADENCE, "renderer \"gpu\"", false, CADENCE_GPU_REFUSAL),
         (CADENCE, cpu_dma, false, DMA_REFUSAL),
         (CADENCE, COPY, true, WORK_STATS_REFUSAL),
+        (NO_CHECKSUM, "renderer \"gpu\"", false, DIRECT_ONLY),
+        (NO_CHECKSUM, COPY, false, DIRECT_ONLY),
+        (NO_CHECKSUM, cpu_dma, false, DMA_REFUSAL),
+        (NO_CHECKSUM, "renderer \"cpu\"", true, NO_CHECKSUM_STATS),
     ] {
         let (child, config) = serve(binary, settings, work_stats);
         let result = child.wait_with_output().unwrap();

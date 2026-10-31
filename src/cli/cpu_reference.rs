@@ -33,7 +33,7 @@ pub(super) fn start(
 ) -> Result<RendererWorker, String> {
     let record = record(renderer)?;
     let worker = if renderer == Renderer::Cpu {
-        RendererWorker::start_cpu_until_stopped(stop, wake)?
+        RendererWorker::start_cpu_until_stopped(stop, wake, true)?
     } else {
         RendererWorker::start_cpu_copy_reference_until_stopped(stop, wake)?
     };

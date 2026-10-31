@@ -12,6 +12,8 @@ mod target_generations;
 mod wait;
 #[cfg(feature = "diagnostic-cpu-reference")]
 pub(crate) use cadence::QUOTA as CADENCE_QUOTA;
+#[cfg(all(test, feature = "diagnostic-cpu-reference"))]
+pub(crate) use cadence::cpu_record_session_for_tests;
 pub use image::RenderImage;
 use presentation::PendingPresentation;
 pub use statistics::WorkStatistics;

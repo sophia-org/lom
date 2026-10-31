@@ -437,11 +437,28 @@ One offscreen hash-on/off/off/on sequence measured mean render-call CPU of
 in the [candidate report](https://github.com/sophia-org/lom/blob/cpu/diagnostic-checksum/docs/redraw-attribution.md).
 Receipt: `~/.local/state/lom-cpu-diagnostic-checksum-01/RECEIPT.json`, SHA256
 `a557db4f70093591fe3bea9ad8595244a6173c49e5fa645ec5b850635703d68b`.
-This is unmerged runtime work, with no native gain or adoption claim. Ordinary
+At that stage this was unmerged runtime work, with no native gain or adoption claim. Ordinary
 CPU logs would become schema 2 with `checksum=unavailable`; diagnostics keep
 schema 1. The existing hashed cadence cannot qualify the change unchanged:
 the next native design must separate pixel qualification from measuring the
 no-hash path and state the observability difference. t022 remains open.
+
+The follow-up `cpu/checksum-cadence` at `7e74dd7` subsequently passed both
+native gates and independent saved-data audits, qualifying this merge.
+Static ordinary-off and reference-on opaque strips were byte-equal at h24
+and h512; the off arm has no producer checksum. The fixed on/off/off/on
+cadence comparison measured off-minus-on accounting bounds of
+−222.5..−122.5 µs at h24 and −3272.5..−3172.5 µs at h512 per reported DRM
+scanout-start interval, summed over Session, Lom and Hagia, with zero missed
+refreshes in all eight runs. These are accounting bounds for instrumented
+executables, not confidence intervals, isolated FNV cost or production savings.
+The cadence-off executable was not captured; its pixel coverage comes from
+the ordinary-entry static gate and shared signed source. Qualification receipt:
+`~/.local/state/lom-cpu-checksum-qualification-01/RECEIPT.json`, SHA256
+`b06647759bb7bdbb4f080ce46c917a0a4a9c2a0f025aecf5d06c86177c4b967e`.
+Ordinary CPU candidates now use schema 2 with `checksum=unavailable`;
+diagnostic entries retain schema 1 hashes. Conversion remains unchanged,
+and t022 remains open for further per-redraw work.
 
 ## Connections
 

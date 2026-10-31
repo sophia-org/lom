@@ -268,6 +268,55 @@ fn split_matches_saved_scene_and_production_with_real_loans() {
 }
 
 #[test]
+fn optional_hash_preserves_both_saved_scenes_and_ring_custody() {
+    for height in [24, 512] {
+        let mut reference = None;
+        for diagnostic in [false, true] {
+            let mut ring = ready_ring_for(height);
+            let mut hosts = RetainedHosts::default();
+            let mut backend = Backend::Cpu(VelloCpuRenderer::new(1, 1), diagnostic);
+            for frame in 0..3 {
+                let fill = ring
+                    .acquire_owned_slot((WIDTH * height * 4) as usize, 3 + frame)
+                    .unwrap();
+                let content = render(
+                    &mut backend,
+                    &mut hosts,
+                    RenderJob {
+                        identity: identity(),
+                        fill: Some(fill),
+                        model: model_for(height),
+                        width: WIDTH,
+                        height,
+                        scale: 1.0,
+                    },
+                )
+                .unwrap();
+                let RenderImage::RingFill {
+                    mut fill, checksum, ..
+                } = content.pixels
+                else {
+                    panic!("CPU render must return its loan");
+                };
+                let bytes = fill.pixels_mut().unwrap();
+                assert_eq!(
+                    crate::service::pixel_checksum(bytes),
+                    expected_checksum(height)
+                );
+                assert_eq!(checksum, diagnostic.then(|| expected_checksum(height)));
+                if let Some(expected) = &reference {
+                    assert_eq!(bytes, expected);
+                } else {
+                    reference = Some(bytes.to_vec());
+                }
+                ring.abort_owned_slot(&mut fill).unwrap();
+                assert_eq!(ring.offers().count(), 0);
+            }
+        }
+    }
+}
+
+#[test]
 #[ignore = "offscreen attribution; run explicitly in release with no concurrent builds"]
 fn measure_redraw_phases() {
     if cfg!(debug_assertions) {
@@ -282,5 +331,57 @@ fn measure_redraw_phases() {
     }
     for height in [24, 512] {
         run(height, 120, 200, true);
+    }
+}
+
+#[test]
+#[ignore = "offscreen checksum policy; run explicitly in release with no concurrent builds"]
+fn measure_checksum_policy() {
+    if cfg!(debug_assertions) {
+        panic!("attribution requires --release");
+    }
+    let mut rows = Vec::new();
+    for height in [24, 512] {
+        for (block, diagnostic) in [true, false, false, true].into_iter().enumerate() {
+            let mut ring = ready_ring_for(height);
+            let mut hosts = RetainedHosts::default();
+            let mut backend = Backend::Cpu(VelloCpuRenderer::new(1, 1), diagnostic);
+            for index in 0..320 {
+                let fill = ring
+                    .acquire_owned_slot((WIDTH * height * 4) as usize, 3 + index)
+                    .unwrap();
+                let job = RenderJob {
+                    identity: identity(),
+                    fill: Some(fill),
+                    model: model_for(height),
+                    width: WIDTH,
+                    height,
+                    scale: 1.0,
+                };
+                let (content, span) = measure(|| render(&mut backend, &mut hosts, job).unwrap());
+                let RenderImage::RingFill {
+                    mut fill, checksum, ..
+                } = content.pixels
+                else {
+                    panic!("CPU render must return its loan");
+                };
+                // Validate both policies after the measured production call.
+                assert_eq!(
+                    crate::service::pixel_checksum(fill.pixels_mut().unwrap()),
+                    expected_checksum(height)
+                );
+                assert_eq!(checksum, diagnostic.then(|| expected_checksum(height)));
+                ring.abort_owned_slot(&mut fill).unwrap();
+                if index >= 120 {
+                    rows.push((height, block, diagnostic, index - 120, span));
+                }
+            }
+        }
+    }
+    for (height, block, diagnostic, index, span) in rows {
+        println!(
+            "lom_checksum_policy schema=1 height={height} block={block} diagnostic={diagnostic} index={index} cpu_ns={} wall_ns={}",
+            span.cpu_ns, span.wall_ns
+        );
     }
 }

@@ -205,3 +205,5 @@ impl<R: ContentRenderer> ShellService<R> {
 #[cfg(test)]
 #[path = "../../tests/support/service_cadence.rs"]
 mod tests;
+#[cfg(test)]
+pub(crate) use tests::cpu_record_session_for_tests;
