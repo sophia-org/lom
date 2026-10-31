@@ -346,6 +346,24 @@ fn presented(count: u64) -> impl Fn(&ShellService<RendererWorker>) -> bool {
     move |service| service.cadence.as_ref().unwrap().presented == count
 }
 
+/// Reuse the real peer for a subprocess stdout test of CLI dispatch and drive.
+pub(crate) fn cpu_record_session_for_tests(
+    worker: RendererWorker,
+    run: impl FnOnce(
+        &mut ShellService<RendererWorker>,
+        fn(&ShellService<RendererWorker>) -> bool,
+    ) -> Result<(), String>,
+) -> Vec<u8> {
+    let mut session = session(worker, 1);
+    let result = run(&mut session.service, |service| {
+        service.panels[0].presented.is_some() && service.presentations.is_empty()
+    });
+    let images = session.finish();
+    result.unwrap();
+    assert_eq!(images.len(), 1);
+    images.into_iter().next().unwrap()
+}
+
 fn complete(final_record: &str, quota: u64) {
     let prefix = format!(
         "lom_cadence_final schema=1 status=complete quota={quota} presented={quota} renders_started={quota} renders_completed={quota} uploads={quota} raster_reuses=0 "

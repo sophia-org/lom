@@ -96,6 +96,12 @@ Consumers that require schema 1 must use a diagnostic entry; a zero or reused
 checksum is never substituted. `RenderImage::RingFill.checksum` is now optional.
 GPU readback still hashes on the owner, and DMA still reports unavailable.
 
+Compatibility: `niltempus/tools/probes/lom_workload/records.py` and panel
+gates that require schema 1 will refuse ordinary explicit-CPU output. Use the
+checksum-enabled reference entry for those checks, or a separately reviewed
+schema-2 gate that makes no producer-hash claim. GPU readback's schema 1 and
+the existing DMA schema-2 probe are unaffected.
+
 The normal controls exercise actual entry dispatch, exact bytes at h24/h512,
 and unchanged ring custody. For an explicitly requested release-only local
 comparison, run `render::worker::tests::redraw_attribution::measure_checksum_policy`

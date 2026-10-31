@@ -250,7 +250,11 @@ the separate ignored policy measurement times the actual worker render call
 on the calling thread, with pixel validation outside that interval.
 `tests/support/checksum_entry.rs`, nested under the existing private serve
 tests, verifies checksum selection through each actual entry's worker startup
-and compares the returned mapped pixels. It exports no inspection hook.
+and compares the returned mapped pixels. Its subprocess stdout control uses
+test-only re-exports of the existing cadence peer fixture to exercise the actual
+entry startup, owner loop and candidate writer. It pins exact record order,
+schema and checksum against the bytes read by that peer; no runtime inspection
+API or record-formatting seam is added.
 
 `tests/support/service_fill_snapshot.rs` is mounted privately from the ring-fill
 owner to mutate one owner snapshot field between completion and commit over a
