@@ -111,3 +111,30 @@ comparison cannot qualify this ordinary-path saving. A fresh native design must
 separate pixel qualification from the no-hash performance arm and report the
 observability difference. No native performance benefit or production adoption
 follows from this candidate's offline checks.
+
+The signed candidate `91e792d930773c46838dd37bbad321bf44dc9297` passed
+the full gate: 245 Rust tests, 18 tool tests, no failures or warnings, and both
+feature configurations passed Clippy. Mutating either entry's policy caused
+the entry-dispatch control to fail; the restored control passed.
+
+One release sequence then measured the actual render call, with no compiler
+processes observed at startup. All 2,560 renders, including warmups, passed
+post-call pixel validation. Per-block mean calling-thread CPU in microseconds:
+
+| Height | Hash on (first) | Hash off | Hash off | Hash on (last) |
+|---|---:|---:|---:|---:|
+| 24 | 330.39 | 172.50 | 150.31 | 273.60 |
+| 512 | 4888.66 | 1894.51 | 1953.82 | 4733.92 |
+
+The equal-weight means are 301.99 → 161.40 µs at h24 and
+4811.29 → 1924.16 µs at h512. These are descriptive offscreen results;
+variation between blocks is preserved, with no confidence interval or native
+projection. They support removing the hash pass as a candidate, not deployment.
+
+Evidence: `~/.local/state/lom-cpu-diagnostic-checksum-01/RECEIPT.json`,
+`SOURCE-GATE.json`, `MEASUREMENT.json`, raw `measurement-1.log` and
+`analysis-1.json`. The release test binary was consumed in place and hashed
+before/after: `c7543b2951ee7a40d50a47e26d4d04b6687177cf0ea840856f6c132ad6e55c76`.
+It used opt-level 3 without debug assertions; compiled Vello features were
+`png,std,text,u8_pipeline`, without multithreading. No ordinary runtime
+release, native launch or master promotion was performed for this candidate.
