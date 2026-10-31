@@ -114,6 +114,8 @@ impl ContentRenderer for FillRenderer {
                 width,
                 height,
                 checksum: Some(0),
+                region: None,
+                opaque: false,
             },
             targets: Vec::new(),
         }))

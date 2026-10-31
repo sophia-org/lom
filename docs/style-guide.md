@@ -114,6 +114,12 @@ compare their scope against real CPU-rendered pixels. The production public API
 still exposes only the whole-panel reuse predicate; no test inspection API or
 partial-render admission is added.
 
+The private `tests/support/service_regions.rs` mount checks bounded placement
+coverage and geometry fallback. Its `region_session.rs` peer composes accepted
+ring bytes across updates and delayed releases. A test-only owner clock fixes
+the observation sequence without exposing a production clock or inspection API.
+These controls prove client custody and pixels, not native composition.
+
 Repository-tool tests live in `tools/tests/` and exercise the actual command or
 observable behavior. Gate regressions must prove both acceptance and rejection,
 especially at threshold boundaries; a helper-only assertion is not sufficient.

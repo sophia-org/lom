@@ -74,6 +74,8 @@ impl ContentRenderer for Lender {
                 width,
                 height,
                 checksum: Some(0),
+                region: None,
+                opaque: false,
             },
             targets: Vec::new(),
         }))
@@ -229,7 +231,7 @@ impl Harness {
     }
 
     /// What a spent resource ID or slot generation would change.
-    fn spend(&self) -> (u64, [(u64, u64); 2]) {
+    fn spend(&self) -> (u64, [(u64, u64); RESOURCE_SLOTS]) {
         let slots = self.service.panels[0]
             .resources
             .map(|slot| (slot.id, slot.generation));
@@ -272,8 +274,12 @@ const SNAPSHOT: [Mutation; 12] = [
     }),
     ("geometry", |s| s.panels[0].allocation.pixel.width -= 1),
     ("topology", |s| s.facts.facts_generation += 1),
-    // None and Some(1) both target slot 0; the original current slot is bound.
-    ("current slot", |s| s.panels[0].current_slot = Some(1)),
+    ("current raster set", |s| {
+        s.panels[0].current.0[0] = Some(regions::Placement {
+            slot: 1,
+            rect: regions::full_rect(8, 48),
+        });
+    }),
     ("resource id", |s| s.panels[0].resources[0].id = 7),
     ("resource generation", |s| {
         s.panels[0].resources[0].generation += 1

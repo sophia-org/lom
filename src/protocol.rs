@@ -13,5 +13,7 @@
 //! remain closed until their Sophia owners are implemented and admitted.
 
 mod pixels;
+#[cfg(test)]
 pub(crate) use pixels::rgba8_to_premultiplied_bgra;
+pub(crate) use pixels::rgba8_to_premultiplied_bgra_opaque;
 pub use pixels::{ContentPixels, PixelChunk, PixelChunks};

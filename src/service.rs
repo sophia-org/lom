@@ -5,6 +5,7 @@ mod cadence;
 mod custody;
 mod image;
 mod presentation;
+mod regions;
 mod ring_fill;
 mod scheduler;
 mod statistics;
@@ -16,6 +17,7 @@ pub(crate) use cadence::QUOTA as CADENCE_QUOTA;
 pub(crate) use cadence::cpu_record_session_for_tests;
 pub use image::RenderImage;
 use presentation::PendingPresentation;
+use regions::{RESOURCE_SLOTS, RasterSet, UpdatePlan};
 pub use statistics::WorkStatistics;
 
 use crate::{
@@ -141,6 +143,25 @@ pub trait ContentRenderer {
         false
     }
 
+    /// Whether this direct CPU renderer can fill physical sub-targets.
+    fn supports_regions(&self) -> bool {
+        false
+    }
+
+    /// Render a region while resolving the complete panel scene and targets.
+    /// `geometry` is the full allocation's width, height and scale. A refusal
+    /// returns the unpublished loan just like `submit_fill`.
+    fn submit_region(
+        &mut self,
+        _identity: RenderIdentity,
+        _model: Model,
+        _geometry: (u32, u32, f64),
+        _region: ContentPixelRect,
+        fill: sophia_shell_client::OwnedRingSlotFill,
+    ) -> Result<(), (String, sophia_shell_client::OwnedRingSlotFill)> {
+        Err(("renderer does not fill regions".into(), fill))
+    }
+
     /// Queue exactly one render into `fill`. A refusal returns the untouched
     /// loan so the owner can abort it without publishing or faulting the ring.
     fn submit_fill(
@@ -163,9 +184,10 @@ struct Panel {
     model: Model,
     dirty: bool,
     interaction_dirty: bool,
-    current_slot: Option<usize>,
+    current: RasterSet,
+    regions_disabled: bool,
     presented: Option<PresentedPanel>,
-    resources: [ResourceSlot; 2],
+    resources: [ResourceSlot; RESOURCE_SLOTS],
 }
 
 #[derive(Clone, Debug)]
@@ -183,6 +205,7 @@ struct RasterSummary {
     height: u32,
     bytes: usize,
     checksum: Option<u64>,
+    opaque: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -197,7 +220,9 @@ struct ResourceSlot {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ResourceState {
     Free,
+    Reserved,
     Staging,
+    Accepted,
     Resident,
     Retiring,
 }
@@ -222,6 +247,8 @@ pub struct ShellService<R> {
     next_candidate_generation: u64,
     next_resource: u64,
     last_second: u64,
+    #[cfg(test)]
+    observed_clock: Option<DateTime<FixedOffset>>,
     latest_indicators: Option<ShellIndicatorSnapshot>,
     pending_content: VecDeque<(TransactionId, ShellContentRecord)>,
     lifecycle: ContentLifecycle,
@@ -232,6 +259,7 @@ pub struct ShellService<R> {
     presentations: Vec<PendingPresentation>,
     rendering_panel: Option<usize>,
     rendering_fill: Option<ring_fill::FillTarget>,
+    rendering_update: Option<UpdatePlan>,
     next_panel: usize,
     progressed: bool,
     statistics: Option<WorkStatistics>,
@@ -341,6 +369,8 @@ impl<R: ContentRenderer> ShellService<R> {
             next_candidate_generation: 1,
             next_resource: 1,
             last_second: unix_second(),
+            #[cfg(test)]
+            observed_clock: None,
             latest_indicators: None,
             pending_content: VecDeque::new(),
             activation_high_water: 0,
@@ -348,6 +378,7 @@ impl<R: ContentRenderer> ShellService<R> {
             presentations: Vec::with_capacity(pending_capacity),
             rendering_panel: None,
             rendering_fill: None,
+            rendering_update: None,
             next_panel: 0,
             progressed: false,
             statistics: None,
@@ -459,7 +490,8 @@ impl<R: ContentRenderer> ShellService<R> {
                 model,
                 dirty: true,
                 interaction_dirty: true,
-                current_slot: None,
+                current: RasterSet::default(),
+                regions_disabled: false,
                 presented: None,
                 resources: [ResourceSlot {
                     id: 0,
@@ -467,7 +499,7 @@ impl<R: ContentRenderer> ShellService<R> {
                     bytes: 0,
                     state: ResourceState::Free,
                     release_deadline: None,
-                }; 2],
+                }; RESOURCE_SLOTS],
             });
         }
         Ok(())

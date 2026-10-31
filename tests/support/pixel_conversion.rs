@@ -1,6 +1,24 @@
 use super::rgba8_to_premultiplied_bgra;
 
 #[test]
+fn opacity_is_measured_from_every_actual_pixel_without_changing_conversion() {
+    for alpha in 0..=255 {
+        for at in 0..3 {
+            let mut pixels = [201, 77, 19, 255].repeat(3);
+            pixels[at * 4 + 3] = alpha;
+            let mut expected = pixels.clone();
+            rgba8_to_premultiplied_bgra(&mut expected);
+            assert_eq!(
+                super::rgba8_to_premultiplied_bgra_opaque(&mut pixels),
+                alpha == 255
+            );
+            assert_eq!(pixels, expected);
+        }
+    }
+    assert!(!super::rgba8_to_premultiplied_bgra_opaque(&mut [255; 5]));
+}
+
+#[test]
 fn every_channel_and_alpha_matches_the_wire_rounding_rule() {
     let mut rgba = Vec::new();
     let mut expected = Vec::new();

@@ -20,6 +20,10 @@ pub enum RenderImage {
         height: u32,
         /// Diagnostic checksum of the converted wire bytes, when requested.
         checksum: Option<u64>,
+        /// Exact physical region requested, or None for the legacy full path.
+        region: Option<sophia_shell_protocol::ContentPixelRect>,
+        /// Actual output alpha was checked and every pixel was opaque.
+        opaque: bool,
     },
 }
 

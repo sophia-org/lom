@@ -350,7 +350,8 @@ No zero-copy claim follows from an imported handle.
 t017 first measures reuse of the existing immutable resource/placement tables
 for static panels and small clock updates. It is promoted to the critical path
 with t022 on 2026-10-30, as its changed-region gate. Tiles already exist in the content
-contract; Lom's current full-panel submission does not exploit them. A new delta
+contract; the [bounded dirty-update implementation](../../retained-regions.md)
+now uses them on eligible CPU panels, pending native qualification. A new delta
 contract, if needed, must name its base and pass a separate design gate.
 
 The 2026-10-30 read-only t017 trace (Lom `3fe206dc`, SDK `99b05e34`,
@@ -371,7 +372,9 @@ must budget staging slots, live resources and resident/retiring bytes separately
 It must still prove stale-tile and alternating-slot correctness, full-frame
 pixel equivalence at antialiased tile edges, placement order/alpha, and the
 Session cost of more placements. Resource id/generation keys the texture
-handle; whether unchanged handles avoid CPU/GPU re-import remains unverified.
+handle, but the follow-up trace found that unchanged CPU placements still incur
+composition and EGL upload work. Retention saves client redraw and Session
+ingestion work only; extra placement cost must be measured.
 
 t018 broad ironbar parity remains deferred to a user-prioritized compatibility
 list after daily-driver acceptance.
@@ -392,9 +395,10 @@ after direct fill landed. Sophia's
 [continuous-frame CPU plan](https://github.com/sophia-org/sophia/blob/master/docs/notes/plans/4rifczhw-reduce-continuous-frame-cpu-without-weakening-custody.md)
 owns the order and gates; this section records Lom's share.
 
-Lom already skips unchanged frames (`same_panel_pixels`, raster reuse), but
-every render is full-surface: `src/render/cpu.rs` rasterizes all width×height
-pixels and converts the whole frame to premultiplied BGRA. At the original
+Lom already skips unchanged frames (`same_panel_pixels`, raster reuse). At the
+original attribution checkpoint every render was full-surface:
+`src/render/cpu.rs` rasterized all width×height pixels and converted the whole
+frame to premultiplied BGRA. At that
 attribution checkpoint, `src/render/worker.rs` also checksummed every frame;
 the qualified changes below remove that ordinary-path pass and simplify
 opaque conversion. The diagnostic cadence

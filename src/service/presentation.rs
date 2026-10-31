@@ -2,6 +2,7 @@ use super::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PresentationPhase {
+    AwaitRender,
     ResourceUnqueued,
     ImageOffered,
     ResourceAccepted,
@@ -16,7 +17,10 @@ pub(super) struct PendingPresentation {
     pub(super) panel: usize,
     slot_index: usize,
     resource: ContentResourceId,
-    old: Option<ContentResourceId>,
+    update: UpdatePlan,
+    discard: bool,
+    uploads: u32,
+    upload_bytes: u64,
     candidate: u64,
     demand_id: u64,
     offer: Option<u64>,
@@ -38,83 +42,144 @@ pub(super) struct PendingPresentation {
     timing: super::cadence::Timing,
 }
 
+impl PendingPresentation {
+    pub(super) fn render_request(&self) -> Option<(regions::Placement, Model, bool)> {
+        (self.phase == PresentationPhase::AwaitRender).then(|| {
+            (
+                *self.update.jobs.front().expect("awaiting planned region"),
+                self.model.clone(),
+                self.update.inspect_opacity,
+            )
+        })
+    }
+}
+
 impl<R: ContentRenderer> ShellService<R> {
     pub(super) fn begin_presentation(
         &mut self,
         panel: usize,
-        content: RenderedContent,
+        mut content: RenderedContent,
     ) -> Result<(), String> {
-        if self
-            .presentations
-            .iter()
-            .any(|pending| pending.panel == panel)
-        {
-            return Err("a content presentation is already in flight".into());
-        }
-        let (slot_index, slot, old) = {
-            let panel = &self.panels[panel];
-            let slot_index = panel.current_slot.map_or(0, |slot| 1 - slot);
-            (
-                slot_index,
-                panel.resources[slot_index],
-                panel.current_slot.map(|index| panel.resources[index]),
-            )
-        };
-        let resource = ContentResourceId {
-            id: slot.id,
-            generation: slot.generation,
-        };
-        let old = old.map(|slot| ContentResourceId {
-            id: slot.id,
-            generation: slot.generation,
-        });
-        let candidate = 0;
+        let model = self
+            .rendering_model
+            .take()
+            .ok_or("render completion lost its originating model")?;
         let fill = self.rendering_fill.take();
         if fill.is_some() != matches!(content.pixels, RenderImage::RingFill { .. }) {
             return Err("owned ring fill and its owner snapshot diverged".into());
         }
-        #[cfg(feature = "diagnostic-cpu-reference")]
-        let timing = self.cadence_job();
-        let pixels = &content.pixels;
-        self.panels[panel].resources[slot_index] = ResourceSlot {
-            id: slot.id,
-            generation: slot.generation,
-            bytes: pixels.byte_len() as u64,
-            state: ResourceState::Staging,
-            release_deadline: None,
-        };
-        self.presentations.push(PendingPresentation {
-            panel,
-            slot_index,
-            resource,
-            old,
-            candidate,
-            demand_id: 0,
-            offer: None,
-            accepted: false,
-            permit: None,
-            raster: RasterSummary {
-                width: pixels.width(),
-                height: pixels.height(),
-                bytes: pixels.byte_len(),
-                checksum: pixels.checksum(),
-            },
-            targets_prepared: false,
-            targets: content.targets.clone(),
-            content: Some(content),
-            fill,
-            raster_reused: false,
-            phase: PresentationPhase::ResourceUnqueued,
-            deadline: Instant::now() + RESPONSE_TIMEOUT,
-            presentation_epoch: 0,
-            indicator_revision: self.rendering_revision,
-            model: self
-                .rendering_model
+        let mut pending = if let Some(at) = self.presentations.iter().position(|p| p.panel == panel)
+        {
+            let pending = self.presentations.remove(at);
+            if pending.phase != PresentationPhase::AwaitRender || pending.model != model {
+                return Err("render completion does not belong to the immutable update".into());
+            }
+            if pending.targets != content.targets {
+                return Err("region render changed the immutable update targets".into());
+            }
+            pending
+        } else {
+            let update = self
+                .rendering_update
                 .take()
-                .ok_or("render completion lost its originating model")?,
+                .ok_or("render completion lost its raster plan")?;
+            let job = *update.jobs.front().ok_or("empty raster plan")?;
+            let slot = self.panels[panel].resources[job.slot];
             #[cfg(feature = "diagnostic-cpu-reference")]
-            timing,
-        });
+            let timing = self.cadence_job();
+            let allocation = &self.panels[panel].allocation;
+            PendingPresentation {
+                panel,
+                slot_index: job.slot,
+                resource: ContentResourceId {
+                    id: slot.id,
+                    generation: slot.generation,
+                },
+                update,
+                discard: false,
+                uploads: 0,
+                upload_bytes: 0,
+                candidate: 0,
+                demand_id: 0,
+                offer: None,
+                accepted: false,
+                permit: None,
+                content: None,
+                fill: None,
+                targets: content.targets.clone(),
+                targets_prepared: false,
+                raster: RasterSummary {
+                    width: allocation.pixel.width,
+                    height: allocation.pixel.height,
+                    bytes: crate::protocol::ContentPixels::byte_len(
+                        allocation.pixel.width,
+                        allocation.pixel.height,
+                    )?,
+                    checksum: None,
+                    opaque: true,
+                },
+                raster_reused: false,
+                phase: PresentationPhase::AwaitRender,
+                deadline: Instant::now() + RESPONSE_TIMEOUT,
+                presentation_epoch: 0,
+                indicator_revision: self.rendering_revision,
+                model,
+                #[cfg(feature = "diagnostic-cpu-reference")]
+                timing,
+            }
+        };
+        let job = *pending
+            .update
+            .jobs
+            .front()
+            .ok_or("completion has no region job")?;
+        if job.slot != pending.slot_index
+            || content.pixels.width() != job.rect.width
+            || content.pixels.height() != job.rect.height
+        {
+            return Err("render completion changed the planned geometry".into());
+        }
+        let opaque = matches!(content.pixels, RenderImage::RingFill { opaque: true, .. });
+        if pending.update.tiled && !opaque {
+            let RenderImage::RingFill { fill, .. } = &mut content.pixels else {
+                return Err("region render lost its owned loan".into());
+            };
+            self.abort_fill(fill)?;
+            self.free_reserved(panel, &pending.update);
+            pending.update.old = pending
+                .update
+                .next
+                .placements()
+                .filter(|p| {
+                    !self.panels[panel].current.contains(p.slot)
+                        && self.panels[panel].resources[p.slot].state == ResourceState::Accepted
+                })
+                .map(|p| p.slot)
+                .collect();
+            pending.update.jobs.clear();
+            pending.discard = true;
+            pending.phase = PresentationPhase::RetireNeeded;
+            self.panels[panel].regions_disabled = true;
+        } else {
+            if pending.update.inspect_opacity && !opaque {
+                self.panels[panel].regions_disabled = true;
+            }
+            pending.raster.opaque &= opaque;
+            if !pending.update.tiled {
+                pending.raster.checksum = content.pixels.checksum();
+            }
+            let slot = &mut self.panels[panel].resources[job.slot];
+            if slot.state != ResourceState::Reserved
+                || slot.bytes != content.pixels.byte_len() as u64
+            {
+                return Err("render completion lost its budget reservation".into());
+            }
+            slot.state = ResourceState::Staging;
+            pending.fill = fill;
+            pending.content = Some(content);
+            pending.phase = PresentationPhase::ResourceUnqueued;
+        }
+        self.presentations.push(pending);
         Ok(())
     }
 
@@ -145,10 +210,17 @@ impl<R: ContentRenderer> ShellService<R> {
             return Ok(());
         }
         let slot_index = panel
-            .current_slot
-            .ok_or("presented panel lost its resource")?;
+            .current
+            .placements()
+            .next()
+            .ok_or("presented panel lost its resources")?
+            .slot;
         let slot = panel.resources[slot_index];
-        if slot.state != ResourceState::Resident {
+        if panel
+            .current
+            .placements()
+            .any(|p| panel.resources[p.slot].state != ResourceState::Resident)
+        {
             return Err("interaction refresh lost resident pixels".into());
         }
         self.presentations.push(PendingPresentation {
@@ -158,7 +230,16 @@ impl<R: ContentRenderer> ShellService<R> {
                 id: slot.id,
                 generation: slot.generation,
             },
-            old: None,
+            update: UpdatePlan {
+                next: panel.current,
+                jobs: VecDeque::new(),
+                old: VecDeque::new(),
+                tiled: panel.current.placements().count() == 3,
+                inspect_opacity: false,
+            },
+            discard: false,
+            uploads: 0,
+            upload_bytes: 0,
             candidate: 0,
             demand_id: 0,
             offer: None,
@@ -206,6 +287,11 @@ impl<R: ContentRenderer> ShellService<R> {
         };
         self.progressed |= progressed || pending.phase != old_phase;
         if pending.phase == PresentationPhase::Presented {
+            if pending.discard {
+                self.panels[pending.panel].dirty = true;
+                self.panels[pending.panel].interaction_dirty = true;
+                return Ok(false);
+            }
             self.finish_presentation(pending)?;
             return Ok(true);
         }
@@ -218,6 +304,7 @@ impl<R: ContentRenderer> ShellService<R> {
             return Err(format!("content {:?} response timed out", pending.phase));
         }
         match pending.phase {
+            PresentationPhase::AwaitRender => Ok(false),
             PresentationPhase::ResourceUnqueued => self.advance_resource_start(pending),
             PresentationPhase::ResourceAccepted => self.advance_demand_enqueue(pending),
             PresentationPhase::PermitGranted => self.advance_candidate_enqueue(pending),
@@ -319,6 +406,7 @@ impl<R: ContentRenderer> ShellService<R> {
                 identity,
                 width,
                 height,
+                region,
                 ..
             } => {
                 // Recheck the acquire-time snapshot, then publish exactly it.
@@ -331,6 +419,7 @@ impl<R: ContentRenderer> ShellService<R> {
                     .fill
                     .ok_or("owned ring fill lost its owner snapshot")?;
                 if !self.fill_unchanged(index, &target, *identity, *width, *height)
+                    || *region != target.region
                     || fresh_slot.state != ResourceState::Staging
                     || fresh_slot.bytes != byte_len as u64
                 {
@@ -355,6 +444,8 @@ impl<R: ContentRenderer> ShellService<R> {
                         .ok_or("resource identity exhausted")?;
                 }
                 pending.resource = resource;
+                pending.uploads += 1;
+                pending.upload_bytes += byte_len as u64;
                 self.panels[pending.panel].resources[pending.slot_index].id = resource.id;
                 pending.offer = Some(offer);
                 pending.phase = PresentationPhase::ImageOffered;
@@ -440,11 +531,31 @@ impl<R: ContentRenderer> ShellService<R> {
         self.connection
             .image_forget(offer)
             .map_err(|error| format!("image forget: {error:?}"))?;
-        self.panels[pending.panel].resources[pending.slot_index].state = ResourceState::Resident;
+        self.panels[pending.panel].resources[pending.slot_index].state = ResourceState::Accepted;
         // Dropping a DMA frame is permitted only after CaptureComplete above.
         pending.content = None;
-        pending.phase = PresentationPhase::ResourceAccepted;
-        self.advance_demand_enqueue(pending)
+        pending.fill = None;
+        pending
+            .update
+            .jobs
+            .pop_front()
+            .ok_or("settled image has no planned job")?;
+        if let Some(job) = pending.update.jobs.front() {
+            pending.slot_index = job.slot;
+            let slot = self.panels[pending.panel].resources[job.slot];
+            pending.resource = ContentResourceId {
+                id: slot.id,
+                generation: slot.generation,
+            };
+            pending.offer = None;
+            pending.accepted = false;
+            pending.phase = PresentationPhase::AwaitRender;
+            pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
+            Ok(true)
+        } else {
+            pending.phase = PresentationPhase::ResourceAccepted;
+            self.advance_demand_enqueue(pending)
+        }
     }
 
     fn advance_demand_enqueue(
@@ -508,7 +619,7 @@ impl<R: ContentRenderer> ShellService<R> {
         let candidate = self.next_candidate_generation;
         if !self.submit_candidate(
             pending.panel,
-            pending.resource,
+            pending.update.next,
             candidate,
             pending.permit.clone().ok_or("candidate lost its permit")?,
             &pending.targets,
@@ -584,16 +695,24 @@ impl<R: ContentRenderer> ShellService<R> {
         &mut self,
         pending: &mut PendingPresentation,
     ) -> Result<bool, String> {
-        if let Some(old) = pending.old {
-            let old_bytes = self.panels[pending.panel].resources[1 - pending.slot_index].bytes;
+        if let Some(&index) = pending.update.old.front() {
+            let old = self.panels[pending.panel].resources[index];
+            let expected = if pending.discard {
+                ResourceState::Accepted
+            } else {
+                ResourceState::Resident
+            };
+            if old.state != expected || (!pending.discard && pending.update.next.contains(index)) {
+                return Err("retirement does not exclude the exact prior resource".into());
+            }
             let retiring: u64 = self
                 .panels
                 .iter()
-                .flat_map(|panel| &panel.resources)
+                .flat_map(|p| &p.resources)
                 .filter(|slot| slot.state == ResourceState::Retiring)
                 .map(|slot| slot.bytes)
                 .sum();
-            if retiring + old_bytes > self.limits.max_retiring_bytes {
+            if retiring + old.bytes > self.limits.max_retiring_bytes {
                 return Ok(false);
             }
             let transaction = self.transaction()?;
@@ -601,16 +720,23 @@ impl<R: ContentRenderer> ShellService<R> {
                 transaction,
                 &ShellContentRecord::ResourceRetire(ContentResourceRetire {
                     grant: self.limits.grant,
-                    resource: old,
+                    resource: ContentResourceId {
+                        id: old.id,
+                        generation: old.generation,
+                    },
                 }),
             ) {
                 Ok(()) => {}
                 Err(sophia_shell_client::ShellClientError::QueueSaturated) => return Ok(false),
                 Err(error) => return Err(format!("resource retire failed: {error}")),
             }
-            let slot = &mut self.panels[pending.panel].resources[1 - pending.slot_index];
+            let slot = &mut self.panels[pending.panel].resources[index];
             slot.state = ResourceState::Retiring;
             slot.release_deadline = Some(Instant::now() + RESPONSE_TIMEOUT);
+            pending.update.old.pop_front();
+            // Only an enqueued record advances the retirement cursor.
+            pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
+            return Ok(true);
         }
         pending.phase = PresentationPhase::Presented;
         Ok(true)
@@ -643,7 +769,26 @@ impl<R: ContentRenderer> ShellService<R> {
                 "rendered"
             },
         );
-        panel.current_slot = Some(pending.slot_index);
+        panel.current = pending.update.next;
+        for placement in panel.current.placements() {
+            let slot = &mut panel.resources[placement.slot];
+            if !matches!(
+                slot.state,
+                ResourceState::Accepted | ResourceState::Resident
+            ) {
+                return Err("Presented lost an accepted raster resource".into());
+            }
+            slot.state = ResourceState::Resident;
+        }
+        if pending.update.tiled {
+            println!(
+                "lom_panel_regions schema=1 candidate_generation={} placements=3 uploads={} upload_bytes={} retained={}",
+                pending.candidate,
+                pending.uploads,
+                pending.upload_bytes,
+                3 - pending.uploads
+            );
+        }
         panel.presented = Some(PresentedPanel {
             model: pending.model,
             candidate_generation: pending.candidate,
@@ -670,7 +815,7 @@ impl<R: ContentRenderer> ShellService<R> {
     fn submit_candidate(
         &mut self,
         panel_index: usize,
-        resource: ContentResourceId,
+        resources: RasterSet,
         candidate: u64,
         permit: ContentFramePermit,
         targets: &[ContentTargetLayout],
@@ -690,6 +835,22 @@ impl<R: ContentRenderer> ShellService<R> {
             parent_surface_index: u16::MAX,
             anchor_parent_rect: ContentPixelRect::default(),
         };
+        let placements: Vec<_> = resources
+            .placements()
+            .map(|placement| {
+                let resource = panel.resources[placement.slot];
+                ContentPlacement {
+                    resource: ContentResourceId {
+                        id: resource.id,
+                        generation: resource.generation,
+                    },
+                    surface_index: 0,
+                    destination_x_px: placement.rect.x,
+                    destination_y_px: placement.rect.y,
+                }
+            })
+            .collect();
+        let placement_count = placements.len() as u32;
         let target_count = u32::try_from(targets.len()).map_err(|_| "target count overflow")?;
         let begin = ShellContentRecord::CandidateBegin(ContentCandidateBegin {
             grant: self.limits.grant,
@@ -699,7 +860,7 @@ impl<R: ContentRenderer> ShellService<R> {
             pacing_permit: permit.permit_id,
             interaction_generation: 1,
             surface_count: 1,
-            placement_count: 1,
+            placement_count,
             target_count,
         });
         let chunk = ShellContentRecord::CandidateChunk(ContentCandidateChunk {
@@ -707,12 +868,7 @@ impl<R: ContentRenderer> ShellService<R> {
             candidate_generation: candidate,
             chunk_ordinal: 0,
             surfaces: vec![surface],
-            placements: vec![ContentPlacement {
-                resource,
-                surface_index: 0,
-                destination_x_px: 0,
-                destination_y_px: 0,
-            }],
+            placements,
             targets: targets
                 .iter()
                 .map(|target| ContentTarget {
@@ -734,7 +890,7 @@ impl<R: ContentRenderer> ShellService<R> {
             grant: self.limits.grant,
             candidate_generation: candidate,
             surface_count: 1,
-            placement_count: 1,
+            placement_count,
             target_count,
         });
         let transaction = self.transaction()?;
