@@ -1,8 +1,12 @@
 # Retained CPU regions
 
 The ordinary CPU direct-fill path can replace changed start/center/end regions
-while retaining the other accepted resources. This implementation has device-free
-pixel and custody controls; native acceptance and performance remain open.
+while retaining the other accepted resources. Device-free pixel and custody
+controls and the [native sequence pixel gate](region-sequence.md#native-pixel-qualification-2026-10-31)
+passed. The [matched CPU comparison](region-cadence.md#audited-native-result-2026-10-31)
+supports a combined reduction at h512; h24 remains inconclusive. Mason accepted
+promotion with that limit. Ordinary-rate and broader geometry qualification
+remain open.
 GPU, readback, copy-reference and fixed cadence entries keep full-frame rendering.
 
 ## Pixel checks
@@ -185,8 +189,8 @@ panel; producer checksum remains unavailable on this ordinary path. The appended
 a tiled candidate. Aborted unpublished work remains in cumulative work counters;
 it is not attributed to a displayed tile.
 
-The native gate needs a changing clock/workspace workload with byte qualification
-and placement-cost measurement. Static cadence redirties identical content and
-cannot qualify damage savings. No native CPU reduction or displayed-pixel claim
-follows from the smaller upload counter. No release artifact or native package
-is changed by the device-free controls.
+The changing clock/workspace sequence and matched seconds-alternation cadence
+now supply separate pixel and CPU evidence linked above. Static cadence alone
+cannot qualify damage savings, and smaller upload counters alone establish
+neither displayed-byte equality nor a CPU reduction. The native results retain
+their fixture, entry, geometry and instrumentation limits.

@@ -47,7 +47,7 @@ full render of that phase, then compares the two entries. Every adjacent phase
 must also differ. Live clock/workspace changes cannot alter the phase; input
 refuses. These are owner and renderer proofs, not Session-composed pixel evidence.
 
-The attended gate remains required. It must use the existing private Session
+The attended gate uses the existing private Session
 output-capture delivery, capture after the exact phase Presented and before the
 next installation, and refuse missing, extra or ambiguous phase candidates.
 It must compare actual full/region strip bytes for every phase and height, plus
@@ -57,3 +57,25 @@ production entry is not captured by these sequence runs; common renderer and
 owner code are the link, not an executable-identity equivalence claim. Session
 still composes and uploads every placement. No end-to-end saving is established
 by the reduced producer upload bytes.
+
+## Native pixel qualification, 2026-10-31
+
+The sealed `~/.local/state/t331/lom-region-pixels-native-01` completed all twelve
+sessions with source `01e36024`: full and regions at heights 24 and 512, in three
+capture groups per role and height. All nine fixture phases completed in each
+session. Both audits found 18/18 corresponding full/region strips byte-equal,
+4/4 same-model phase-4/phase-6 controls equal, and 24/24 adjacent-phase negative
+controls different. Every captured strip was opaque; phase counters matched,
+with no disabled-region fallback. Capture brackets, executable identities and
+cleanup passed. The comparison concerns panel strips, not arbitrary content.
+
+Manifest SHA256:
+`af99fba225308aee33f91ba869394e5772b015505ebcf37376fecfae45b983bd`.
+Root audit `~/.local/state/lom-region-pixels-audit-01/RECEIPT.json`:
+`a3c697169bc42d1f75d6213181ce107e548cf4e8ddbb7eb0f0d6e36e37363059`.
+Independent audit `~/.local/state/lom-region-pixels-claude-audit-01/AUDIT.json`:
+`b23dfde634b61a366d0a3b0fa9e5bd1094eb062c1b882bd86cbe05d3d641cc0d`.
+
+The separate [matched cadence result](region-cadence.md#audited-native-result-2026-10-31)
+measures CPU accounting. Neither the ordinary entry nor those cadence binaries
+were captured here; their shared renderer and owner source binds that evidence.

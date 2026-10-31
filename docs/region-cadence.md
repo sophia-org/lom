@@ -50,7 +50,7 @@ counted window. Every counted candidate has one job and one Offer. Neither the
 stamps nor the quota identify a pure raster cost or exactly 2000 jobs inside a
 kernel-bracketed accounting window.
 
-## Prospective native comparison
+## Native comparison contract
 
 Use one fixed B/C/C/B block per height, h24 then h512, with full as baseline.
 Use the established quota 2120, anchor generations 120 and 2120, and CPUwin's
@@ -77,5 +77,45 @@ raster/conversion and ingest work while adding placements/draws. Any later
 production-rate estimate must state its assumed update rate and remains an
 estimate, not a native production measurement.
 
-The native result is pending. Keep the pixel-qualified binaries and source
-worktree held; build this driver in its own worktree and pool.
+## Audited native result, 2026-10-31
+
+`lom-region-cadence-native-01` completed all eight runs in the declared order on
+one boot, with source `89c26c35` and the held Sophia `a56ace89` host. DP-1 was
+1920×1080 at nominal 60 Hz. All counted median intervals were 16683 µs, with
+zero missed refreshes. Both saved-data audits reproduced the raw tick bounds,
+executable custody, counter gates and clean cleanup. Every counted regions
+candidate uploaded one third of the panel and retained the other two resources.
+
+All values below are µs per reported scanout interval. Differences are regions
+minus full, with unweighted means of the two runs per role.
+
+| Height | Combined full | Combined regions | Combined difference | Lom difference | Session difference |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 24 | 1450–1500 | 1415–1465 | −85…+15 | −65…−25 | −10…+30 |
+| 512 | 3800–3855 | 2465–2515 | −1390…−1285 | −877.5…−835 | −502.5…−460 |
+
+The h512 combined, Lom and Session intervals support reductions. At h24 Lom
+improved, while combined and Session remain inconclusive; the combined midpoint
+is −35 µs and its upper bound allows a 15 µs increase. Neither height has a
+resolved Session increase. WM is −10…+10 µs at both heights.
+
+Mason accepted promotion on this overall evidence, including the unresolved h24
+combined interval. This decision does not relabel h24 as a measured combined
+saving or establish ordinary-use savings. The matched full arm uses the same
+six-resource ledger as regions, so this result does not isolate the ledger's
+change from the older two-resource owner. The cadence executables themselves
+were not captured; their rendering and owner paths are source-identical to the
+[qualified sequence](region-sequence.md#native-pixel-qualification-2026-10-31).
+
+Evidence (all under `~/.local/state/`):
+
+- `t331/lom-region-cadence-native-01`, manifest
+  `cb0eed0a6d4d840687aea045b4f42313eab19bf0ed62a85a6a7a5323e1769082`.
+- `lom-region-cadence-audit-01/RECEIPT.json`, SHA256
+  `9410ef56c4b6eed56a38672e4112e8482ab1a26de69b7be24c017db88835329d`.
+- `lom-region-cadence-claude-audit-01/RECEIPT.json`, SHA256
+  `e0c969c348328b3927397948e6913817402e9c407eac4383ad4588225ad3aa2c`.
+
+The signed source's full offline gate passed 304 Rust tests. Keep both release
+pools and their source worktrees held for the sealed evidence; promotion does
+not rebuild, install or replace either artifact.
