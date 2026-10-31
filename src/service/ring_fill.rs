@@ -11,7 +11,9 @@ use sophia_shell_client::{ImageAdapterError, ImageChannelState, OwnedRingSlotFil
 pub(super) struct FillTarget {
     identity: RenderIdentity,
     scale: (u32, u32),
-    current_slot: Option<usize>,
+    current: RasterSet,
+    full_size: (u32, u32),
+    pub(super) region: Option<ContentPixelRect>,
     slot: usize,
     resource: (u64, u64),
     pub(super) upload: RingUpload,
@@ -26,6 +28,8 @@ impl<R: ContentRenderer> ShellService<R> {
         index: usize,
         model: Model,
         scale: f64,
+        placement: regions::Placement,
+        inspect_opacity: bool,
     ) -> Result<bool, String> {
         let adapter = self
             .connection
@@ -38,7 +42,11 @@ impl<R: ContentRenderer> ShellService<R> {
             }
             _ => return Ok(false),
         }
-        let target = self.fill_target(index);
+        let target = self.fill_target(
+            index,
+            placement.slot,
+            inspect_opacity.then_some(placement.rect),
+        );
         let (width, height) = (target.upload.width, target.upload.height);
         let bytes = ContentPixels::byte_len(width, height)?;
         let fill = match self
@@ -49,10 +57,19 @@ impl<R: ContentRenderer> ShellService<R> {
             Err(ImageAdapterError::Busy | ImageAdapterError::Again) => return Ok(false),
             Err(error) => return Err(format!("owned ring fill acquisition refused: {error:?}")),
         };
-        if let Err((error, mut fill)) =
+        let submitted = if let Some(region) = target.region {
+            self.renderer.submit_region(
+                target.identity,
+                model,
+                (target.full_size.0, target.full_size.1, scale),
+                region,
+                fill,
+            )
+        } else {
             self.renderer
                 .submit_fill(target.identity, model, width, height, scale, fill)
-        {
+        };
+        if let Err((error, mut fill)) = submitted {
             self.abort_fill(&mut fill)?;
             return Err(error);
         }
@@ -74,6 +91,7 @@ impl<R: ContentRenderer> ShellService<R> {
             identity,
             width,
             height,
+            region,
             ..
         } = &mut content.pixels
         else {
@@ -84,13 +102,19 @@ impl<R: ContentRenderer> ShellService<R> {
         };
         let target = target.ok_or("owned ring fill completed without an owner job")?;
         if self.fill_unchanged(index, &target, *identity, *width, *height)
-            && self.panels[index].resources[target.slot].state == ResourceState::Free
+            && *region == target.region
+            && self.panels[index].resources[target.slot].state == ResourceState::Reserved
         {
             self.rendering_fill = Some(target);
             return Ok(Some(content));
         }
         self.abort_fill(fill)?;
         self.rendering_model = None;
+        if let Some(plan) = self.rendering_update.take() {
+            self.free_reserved(index, &plan);
+        } else {
+            return Err("region fill became stale inside an update".into());
+        }
         let panel = &mut self.panels[index];
         panel.dirty = true;
         panel.interaction_dirty = true;
@@ -98,10 +122,16 @@ impl<R: ContentRenderer> ShellService<R> {
     }
 
     /// The owner's snapshot of what a fill is for, from current state.
-    fn fill_target(&self, index: usize) -> FillTarget {
+    fn fill_target(
+        &self,
+        index: usize,
+        slot: usize,
+        region: Option<ContentPixelRect>,
+    ) -> FillTarget {
         let panel = &self.panels[index];
-        let slot = panel.current_slot.map_or(0, |slot| 1 - slot);
         let resource = panel.resources[slot];
+        let full_size = (panel.allocation.pixel.width, panel.allocation.pixel.height);
+        let rect = region.unwrap_or(regions::full_rect(full_size.0, full_size.1));
         FillTarget {
             identity: RenderIdentity {
                 grant: self.limits.grant,
@@ -113,7 +143,9 @@ impl<R: ContentRenderer> ShellService<R> {
                 panel.allocation.scale_numerator,
                 panel.allocation.scale_denominator,
             ),
-            current_slot: panel.current_slot,
+            current: panel.current,
+            full_size,
+            region,
             slot,
             resource: (resource.id, resource.generation),
             upload: RingUpload {
@@ -129,8 +161,8 @@ impl<R: ContentRenderer> ShellService<R> {
                 output: panel.output.output.id,
                 output_generation: panel.output.output.generation,
                 topology_generation: self.facts.facts_generation,
-                width: panel.allocation.pixel.width,
-                height: panel.allocation.pixel.height,
+                width: rect.width,
+                height: rect.height,
             },
         }
     }
@@ -145,7 +177,7 @@ impl<R: ContentRenderer> ShellService<R> {
         width: u32,
         height: u32,
     ) -> bool {
-        self.fill_target(index) == *target
+        self.fill_target(index, target.slot, target.region) == *target
             && target.identity.grant.connection_epoch == self.connection.connection_epoch()
             && identity == target.identity
             && (width, height) == (target.upload.width, target.upload.height)

@@ -66,3 +66,4 @@ pub fn same_panel_pixels(left: &Model, right: &Model) -> bool {
 }
 
 mod panel_changes;
+pub(crate) use panel_changes::{PanelChanges, panel_changes};

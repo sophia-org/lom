@@ -94,12 +94,19 @@ impl ContentPixels {
 /// The single straight-RGBA8 to premultiplied-BGRA8 conversion, shared by
 /// readback pixels and CPU fills written directly into an owned ring slot.
 pub(crate) fn rgba8_to_premultiplied_bgra(bytes: &mut [u8]) {
+    rgba8_to_premultiplied_bgra_opaque(bytes);
+}
+
+/// Report opacity from the same per-pixel conversion, without another scan.
+pub(crate) fn rgba8_to_premultiplied_bgra_opaque(bytes: &mut [u8]) -> bool {
+    let mut opaque = bytes.len().is_multiple_of(4);
     for pixel in bytes.chunks_exact_mut(4) {
         // Premultiplication is the identity for an opaque pixel.
         if pixel[3] == 255 {
             pixel.swap(0, 2);
             continue;
         }
+        opaque = false;
         let alpha = u16::from(pixel[3]);
         let premultiply = |channel: u8| ((u16::from(channel) * alpha + 127) / 255) as u8;
         let red = premultiply(pixel[0]);
@@ -107,6 +114,7 @@ pub(crate) fn rgba8_to_premultiplied_bgra(bytes: &mut [u8]) {
         pixel[1] = premultiply(pixel[1]);
         pixel[2] = red;
     }
+    opaque
 }
 
 #[cfg(test)]

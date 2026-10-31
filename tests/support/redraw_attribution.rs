@@ -192,6 +192,7 @@ fn run(height: u32, warmup: usize, samples: usize, emit: bool) {
             RenderJob {
                 identity: identity(),
                 fill: Some(fill),
+                region: None,
                 model,
                 width: WIDTH,
                 height,
@@ -285,6 +286,7 @@ fn optional_hash_preserves_both_saved_scenes_and_ring_custody() {
                     RenderJob {
                         identity: identity(),
                         fill: Some(fill),
+                        region: None,
                         model: model_for(height),
                         width: WIDTH,
                         height,
@@ -353,6 +355,7 @@ fn measure_checksum_policy() {
                 let job = RenderJob {
                     identity: identity(),
                     fill: Some(fill),
+                    region: None,
                     model: model_for(height),
                     width: WIDTH,
                     height,
@@ -411,6 +414,7 @@ fn measure_opaque_conversion() {
             .scene(RenderJob {
                 identity: identity(),
                 fill: None,
+                region: None,
                 model: model_for(height),
                 width: WIDTH,
                 height,

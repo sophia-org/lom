@@ -6,6 +6,9 @@
 
 use super::*;
 
+mod alternating;
+use alternating::Alternating;
+
 /// Rendered candidates one cadence run presents; deliberately not configurable.
 pub(crate) const QUOTA: u64 = 2120;
 
@@ -22,6 +25,7 @@ pub(super) struct Timing {
 }
 
 pub(super) struct Cadence {
+    pub(super) alternating: Option<Alternating>,
     quota: u64,
     presented: u64,
     /// The next job's first eligible attempt, until a presentation takes it.
@@ -68,6 +72,7 @@ impl<R: ContentRenderer> ShellService<R> {
         }
         self.statistics = Some(WorkStatistics::default());
         self.cadence = Some(Cadence {
+            alternating: None,
             quota,
             presented: 0,
             attempt: 0,
@@ -79,6 +84,15 @@ impl<R: ContentRenderer> ShellService<R> {
     }
 
     pub(super) fn cadence_attempt(&mut self) -> Result<(), String> {
+        // Later establishment tiles share the first candidate attempt stamp.
+        if self
+            .cadence
+            .as_ref()
+            .is_some_and(|c| c.alternating.is_some())
+            && !self.presentations.is_empty()
+        {
+            return Ok(());
+        }
         if let Some(cadence) = &mut self.cadence
             && cadence.attempt == 0
         {
@@ -133,11 +147,15 @@ impl<R: ContentRenderer> ShellService<R> {
             return Err("lom-cpu-cadence refused: a candidate beyond its one-panel quota".into());
         }
         let sequence = cadence.presented + 1;
+        let jobs = cadence
+            .alternating
+            .as_ref()
+            .map_or(sequence, |a| a.jobs(sequence));
         if [
             stats.renders_started,
             stats.renders_completed,
             stats.uploads,
-        ] != [sequence; 3]
+        ] != [jobs; 3]
             || stats.raster_reuses != 0
         {
             return Err(format!(
@@ -168,6 +186,7 @@ impl<R: ContentRenderer> ShellService<R> {
         if sequence < cadence.quota {
             self.panels[panel].dirty = true;
         }
+        self.alternating_presented(panel, candidate, sequence)?;
         Ok(())
     }
 
@@ -175,12 +194,20 @@ impl<R: ContentRenderer> ShellService<R> {
     pub(crate) fn cadence_final(&self) -> Option<String> {
         let cadence = self.cadence.as_ref()?;
         let stats = self.statistics.unwrap_or_default();
+        let jobs = cadence
+            .alternating
+            .as_ref()
+            .map_or(cadence.quota, |a| a.jobs(cadence.quota));
         let complete = cadence.presented == cadence.quota
+            && cadence
+                .alternating
+                .as_ref()
+                .is_none_or(|a| a.validated == cadence.quota)
             && [
                 stats.renders_started,
                 stats.renders_completed,
                 stats.uploads,
-            ] == [cadence.quota; 3]
+            ] == [jobs; 3]
             && stats.raster_reuses == 0
             && self.rendering_panel.is_none()
             && self.presentations.is_empty()

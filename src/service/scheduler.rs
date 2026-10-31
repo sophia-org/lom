@@ -6,6 +6,8 @@ impl<R: ContentRenderer> ShellService<R> {
         self.renderer.clear_completion_wake()?;
         self.progressed = false;
         self.observe()?;
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        self.advance_sequence(Instant::now())?;
         if self
             .panels
             .iter()
@@ -18,9 +20,15 @@ impl<R: ContentRenderer> ShellService<R> {
             return Err("resource retirement response timed out".into());
         }
         let second = unix_second();
-        if second != self.last_second {
+        #[cfg(test)]
+        let second = self
+            .observed_clock
+            .map_or(second, |now| now.timestamp() as u64);
+        if self.live_model_inputs() && second != self.last_second {
             self.last_second = second;
             let now = observed_time();
+            #[cfg(test)]
+            let now = self.observed_clock.unwrap_or(now);
             for panel in &mut self.panels {
                 panel.dirty |= observe_clock(&mut panel.model, now);
             }
@@ -55,7 +63,32 @@ impl<R: ContentRenderer> ShellService<R> {
             let count = self.panels.len();
             for offset in 0..count {
                 let index = (self.next_panel + offset) % count;
-                if !self.render_ready(index)? {
+                let continuation = self
+                    .presentations
+                    .iter()
+                    .find(|p| p.panel == index)
+                    .and_then(|p| p.render_request());
+                let (placement, model, inspect_opacity) = if let Some(request) = continuation {
+                    request
+                } else {
+                    let Some(plan) = self.render_plan(index)? else {
+                        continue;
+                    };
+                    let placement = *plan.jobs.front().ok_or("empty raster update")?;
+                    let inspect_opacity = plan.inspect_opacity;
+                    for job in &plan.jobs {
+                        let slot = &mut self.panels[index].resources[job.slot];
+                        slot.state = ResourceState::Reserved;
+                        slot.bytes =
+                            ContentPixels::byte_len(job.rect.width, job.rect.height)? as u64;
+                    }
+                    self.rendering_update = Some(plan);
+                    (placement, self.panels[index].model.clone(), inspect_opacity)
+                };
+                if !self.render_credit(index, placement.slot) {
+                    if let Some(plan) = self.rendering_update.take() {
+                        self.free_reserved(index, &plan);
+                    }
                     continue;
                 }
                 let panel = &self.panels[index];
@@ -67,32 +100,38 @@ impl<R: ContentRenderer> ShellService<R> {
                     allocation: panel.allocation.allocation,
                     scale_generation: panel.allocation.scale_generation,
                 };
-                let (model, width, height) = (
-                    panel.model.clone(),
-                    panel.allocation.pixel.width,
-                    panel.allocation.pixel.height,
-                );
                 #[cfg(feature = "diagnostic-cpu-reference")]
                 self.cadence_attempt()?;
                 if self.renderer.uses_ring_fill() {
-                    // The connection's single loan serves every panel.
-                    if !self.start_fill(index, model.clone(), scale)? {
+                    if !self.start_fill(index, model.clone(), scale, placement, inspect_opacity)? {
+                        if let Some(plan) = self.rendering_update.take() {
+                            self.free_reserved(index, &plan);
+                        }
                         #[cfg(feature = "diagnostic-cpu-reference")]
                         self.cadence_deferred(true);
                         break;
                     }
                 } else {
-                    self.renderer
-                        .submit(identity, model.clone(), width, height, scale)?;
+                    self.renderer.submit(
+                        identity,
+                        model.clone(),
+                        placement.rect.width,
+                        placement.rect.height,
+                        scale,
+                    )?;
                 }
                 let panel = &mut self.panels[index];
-                self.rendering_revision = panel.model.workspaces.generation;
+                self.rendering_revision = model.workspaces.generation;
                 self.rendering_model = Some(model);
                 if let Some(stats) = &mut self.statistics {
                     stats.renders_started = stats.renders_started.saturating_add(1);
                 }
-                panel.dirty = false;
-                panel.interaction_dirty = false;
+                // Observations during a multi-offer update belong to the next
+                // update; never clear them when starting a subsequent tile.
+                if self.rendering_update.is_some() {
+                    panel.dirty = false;
+                    panel.interaction_dirty = false;
+                }
                 self.rendering_panel = Some(index);
                 self.progressed = true;
                 self.next_panel = (index + 1) % count;
@@ -127,51 +166,111 @@ impl<R: ContentRenderer> ShellService<R> {
         Ok(())
     }
 
-    fn render_ready(&self, index: usize) -> Result<bool, String> {
+    pub(super) fn free_reserved(&mut self, index: usize, plan: &UpdatePlan) {
+        for placement in plan.next.placements() {
+            let slot = &mut self.panels[index].resources[placement.slot];
+            if slot.state == ResourceState::Reserved {
+                slot.state = ResourceState::Free;
+                slot.bytes = 0;
+            }
+        }
+    }
+
+    fn region_rendering(&self) -> bool {
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        if self
+            .cadence
+            .as_ref()
+            .is_some_and(|c| c.alternating.is_none())
+        {
+            return false;
+        }
+        self.renderer.supports_regions()
+            && self.limits.max_candidate_placements >= 3
+            && self.limits.max_candidate_bytes >= 8192
+            && self.limits.max_live_resources >= RESOURCE_SLOTS as u32
+            && self.panels.len() * RESOURCE_SLOTS <= self.limits.max_resource_ids as usize
+    }
+
+    fn render_plan(&self, index: usize) -> Result<Option<UpdatePlan>, String> {
         let panel = &self.panels[index];
         if !panel.dirty
-            || self
-                .presentations
-                .iter()
-                .any(|pending| pending.panel == index)
+            || self.presentations.iter().any(|p| p.panel == index)
+            || self.presentations.len() >= self.limits.max_pending_candidates_total as usize
         {
-            return Ok(false);
+            return Ok(None);
         }
-        let slot = &panel.resources[panel.current_slot.map_or(0, |slot| 1 - slot)];
-        if slot.state != ResourceState::Free {
-            return Ok(false);
+        let full_only = false;
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        let full_only = self.sequence.as_ref().map_or(full_only, |s| s.full);
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        let full_only = self
+            .cadence
+            .as_ref()
+            .and_then(|c| c.alternating.as_ref())
+            .map_or(full_only, |a| a.full);
+        let Some(plan) = panel.update_plan(self.region_rendering(), full_only) else {
+            return Ok(None);
+        };
+        let mut bytes = 0;
+        let mut new_ids = 0;
+        for job in &plan.jobs {
+            let size = ContentPixels::byte_len(job.rect.width, job.rect.height)? as u64;
+            if size > self.limits.max_resource_bytes || size > self.limits.max_staging_bytes {
+                return Err("panel cannot fit the negotiated resource budget".into());
+            }
+            bytes += size;
+            new_ids += u64::from(panel.resources[job.slot].id == 0);
         }
-        let bytes =
-            ContentPixels::byte_len(panel.allocation.pixel.width, panel.allocation.pixel.height)?
-                as u64;
-        if bytes > self.limits.max_resource_bytes
-            || bytes > self.limits.max_staging_bytes
-            || bytes > self.limits.max_resident_bytes
-        {
+        if bytes > self.limits.max_resident_bytes {
             return Err("panel cannot fit the negotiated resource budget".into());
         }
-        let mut staging = 0u64;
-        let mut resident_credit = 0u64;
-        let mut open = 0usize;
-        let mut live = 0usize;
+        let mut credit = 0;
+        let mut live = 0;
         for slot in self.panels.iter().flat_map(|panel| &panel.resources) {
             if slot.state != ResourceState::Free {
                 live += 1;
             }
+            if matches!(
+                slot.state,
+                ResourceState::Reserved
+                    | ResourceState::Staging
+                    | ResourceState::Accepted
+                    | ResourceState::Resident
+            ) {
+                credit += slot.bytes;
+            }
+            if slot.id == 0
+                && matches!(slot.state, ResourceState::Reserved | ResourceState::Staging)
+            {
+                new_ids += 1;
+            }
+        }
+        let ids_fit = self
+            .next_resource
+            .checked_add(new_ids)
+            .is_some_and(|next| next <= u64::from(self.limits.max_resource_ids) + 1);
+        Ok((credit + bytes <= self.limits.max_resident_bytes
+            && live + plan.jobs.len() <= self.limits.max_live_resources as usize
+            && ids_fit)
+            .then_some(plan))
+    }
+
+    fn render_credit(&self, index: usize, slot: usize) -> bool {
+        let slot = &self.panels[index].resources[slot];
+        if slot.state != ResourceState::Reserved {
+            return false;
+        }
+        let mut staging = 0;
+        let mut open = 0;
+        for slot in self.panels.iter().flat_map(|panel| &panel.resources) {
             if slot.state == ResourceState::Staging {
                 staging += slot.bytes;
                 open += 1;
             }
-            if matches!(slot.state, ResourceState::Staging | ResourceState::Resident) {
-                resident_credit += slot.bytes;
-            }
         }
-        Ok(staging + bytes <= self.limits.max_staging_bytes
-            && resident_credit + bytes <= self.limits.max_resident_bytes
+        staging + slot.bytes <= self.limits.max_staging_bytes
             && open < self.limits.max_open_transfers as usize
-            && live < self.limits.max_live_resources as usize
-            && self.presentations.len() < self.limits.max_pending_candidates_total as usize
-            && (slot.id != 0 || self.next_resource <= u64::from(self.limits.max_resource_ids)))
     }
 }
 

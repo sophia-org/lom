@@ -350,7 +350,12 @@ No zero-copy claim follows from an imported handle.
 t017 first measures reuse of the existing immutable resource/placement tables
 for static panels and small clock updates. It is promoted to the critical path
 with t022 on 2026-10-30, as its changed-region gate. Tiles already exist in the content
-contract; Lom's current full-panel submission does not exploit them. A new delta
+contract; the [bounded dirty-update implementation](../../retained-regions.md)
+now uses them on eligible CPU panels. The native sequence pixel gate and matched
+CPU comparison passed their integrity gates; h512 shows a combined reduction,
+while h24 stays inconclusive. Mason accepted promotion with that limit on
+2026-10-31. See the [audited result](../../region-cadence.md#audited-native-result-2026-10-31).
+A new delta
 contract, if needed, must name its base and pass a separate design gate.
 
 The 2026-10-30 read-only t017 trace (Lom `3fe206dc`, SDK `99b05e34`,
@@ -368,10 +373,13 @@ at most four staging slots, but that is not a two-slots-per-tile limit. Host
 after its exact finished source read and ordered status publication; candidate
 placement leases retain the accepted resource independently. A tile design
 must budget staging slots, live resources and resident/retiring bytes separately.
-It must still prove stale-tile and alternating-slot correctness, full-frame
-pixel equivalence at antialiased tile edges, placement order/alpha, and the
-Session cost of more placements. Resource id/generation keys the texture
-handle; whether unchanged handles avoid CPU/GPU re-import remains unverified.
+The owner controls and native fixture gates cover stale-tile and alternating-slot
+correctness, full-frame pixel equivalence, placement order/alpha, and the
+Session cost of more placements in the measured workloads. Broader content,
+geometry and ordinary-rate costs remain open. Resource id/generation keys the texture
+handle, but the follow-up trace found that unchanged CPU placements still incur
+composition and EGL upload work. Retention saves client redraw and Session
+ingestion work only; extra placement cost must be measured.
 
 t018 broad ironbar parity remains deferred to a user-prioritized compatibility
 list after daily-driver acceptance.
@@ -392,9 +400,10 @@ after direct fill landed. Sophia's
 [continuous-frame CPU plan](https://github.com/sophia-org/sophia/blob/master/docs/notes/plans/4rifczhw-reduce-continuous-frame-cpu-without-weakening-custody.md)
 owns the order and gates; this section records Lom's share.
 
-Lom already skips unchanged frames (`same_panel_pixels`, raster reuse), but
-every render is full-surface: `src/render/cpu.rs` rasterizes all width×height
-pixels and converts the whole frame to premultiplied BGRA. At the original
+Lom already skips unchanged frames (`same_panel_pixels`, raster reuse). At the
+original attribution checkpoint every render was full-surface:
+`src/render/cpu.rs` rasterized all width×height pixels and converted the whole
+frame to premultiplied BGRA. At that
 attribution checkpoint, `src/render/worker.rs` also checksummed every frame;
 the qualified changes below remove that ordinary-path pass and simplify
 opaque conversion. The diagnostic cadence
@@ -478,15 +487,17 @@ Qualification receipt: `~/.local/state/lom-cpu-opaque-qualification-01/RECEIPT.j
 SHA256 `cfc1a12cda29dbbb777b167a662582dc57b46502675f4a0805db95b9a68004d7`.
 
 The paired Session marginal-cost investigation qualified the opaque validation
-shortcut, now on Sophia master `abe9b2fd`. S1 remains parked. The next t017
-step is [retained CPU region feasibility](../../retained-regions.md): tested
-opaque crops and clock/workspace reconstruction are byte-equal, while a
-transparent fractional-paint counterexample requires full-frame fallback.
-Retained resources avoid ingestion, but the current Session compositor still
-damages every placement and uploads every CPU layer on repaint. Generic
-three-placement custody/projection tests passed in Sophia `3f5ecd1b`; a bounded
-client ledger and native placement cost remain prerequisites. Neither static cadence nor a raster-only screen closes
-t022 or qualifies damage savings.
+shortcut, now on Sophia master `abe9b2fd`. S1 remains parked. The t017
+[retained CPU region owner](../../retained-regions.md) now has bounded custody,
+full-frame fallback, native fixture pixel equality and matched cadence evidence.
+Regions minus full is −85…+15 µs at h24 (inconclusive) and −1390…−1285 µs at h512
+(reduction), per reported interval; both audits reproduced the result with zero
+missed refreshes. The [full result](../../region-cadence.md#audited-native-result-2026-10-31)
+records per-process bounds and Mason's promotion decision. Retention still does
+not avoid Session composition or EGL upload of unchanged placements. This closes
+the bounded t017 investigation, not t022's broader redraw-cost work or the
+CPU/GPU comparison. Ordinary-rate costs and unmeasured content/geometry remain
+open; no Wayland or production saving follows from this fixture result.
 
 ## Connections
 

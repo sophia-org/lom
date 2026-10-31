@@ -20,6 +20,7 @@ struct RenderJob {
     identity: RenderIdentity,
     /// The owner's ring loan for CPU direct fill; never present for GPU jobs.
     fill: Option<OwnedRingSlotFill>,
+    region: Option<sophia_shell_protocol::ContentPixelRect>,
     model: Model,
     width: u32,
     height: u32,
@@ -101,6 +102,7 @@ fn render(
 ) -> Result<RenderedContent, String> {
     let fill = job.fill.take();
     let identity = job.identity;
+    let region = job.region;
     let (mut scene, targets) = hosts.scene(job)?;
     let pixels = match (backend, fill) {
         (Backend::Gpu(renderer, true), None) => RenderImage::Dma(renderer.dma_content(&mut scene)?),
@@ -111,14 +113,21 @@ fn render(
             let pixels = fill
                 .pixels_mut()
                 .map_err(|error| format!("owned ring fill: {error:?}"))?;
-            super::cpu::render_into(renderer, &mut scene, pixels)?;
+            let opaque = if let Some(region) = region {
+                super::cpu::render_region_into(renderer, &mut scene, region, pixels)?
+            } else {
+                super::cpu::render_into(renderer, &mut scene, pixels)?;
+                false
+            };
             let checksum = checksum.then(|| crate::service::pixel_checksum(pixels));
             RenderImage::RingFill {
                 fill,
                 identity,
-                width: scene.width,
-                height: scene.height,
+                width: region.map_or(scene.width, |r| r.width),
+                height: region.map_or(scene.height, |r| r.height),
                 checksum,
+                region,
+                opaque,
             }
         }
         #[cfg(feature = "diagnostic-cpu-reference")]
@@ -136,6 +145,7 @@ pub struct RendererWorker {
     wake: Arc<crate::wake::Wake>,
     dma: bool,
     cpu: bool,
+    regions: bool,
     /// Diagnostic copy reference: a CPU worker that takes slice jobs only.
     #[cfg(feature = "diagnostic-cpu-reference")]
     copy: bool,
@@ -172,7 +182,10 @@ impl RendererWorker {
         Self::start_backend(false, true, None, || {
             Ok((Backend::Cpu(VelloCpuRenderer::new(1, 1), false), None))
         })
-        .map(|(worker, _)| worker)
+        .map(|(mut worker, _)| {
+            worker.regions = true;
+            worker
+        })
     }
 
     pub(crate) fn start_cpu_until_stopped(
@@ -183,7 +196,10 @@ impl RendererWorker {
         Self::start_backend(false, true, Some((stop, fd)), move || {
             Ok((Backend::Cpu(VelloCpuRenderer::new(1, 1), checksum), None))
         })
-        .map(|(worker, _)| worker)
+        .map(|(mut worker, _)| {
+            worker.regions = !checksum;
+            worker
+        })
     }
 
     /// Diagnostic Vello CPU copy reference: the same renderer into an owned
@@ -287,6 +303,7 @@ impl RendererWorker {
                 wake,
                 dma,
                 cpu,
+                regions: false,
                 #[cfg(feature = "diagnostic-cpu-reference")]
                 copy: false,
                 requests,
@@ -372,6 +389,7 @@ impl ContentRenderer for RendererWorker {
         self.queue(RenderJob {
             identity,
             fill: None,
+            region: None,
             model,
             width,
             height,
@@ -407,10 +425,38 @@ impl ContentRenderer for RendererWorker {
         self.queue(RenderJob {
             identity,
             fill: Some(fill),
+            region: None,
             model,
             width,
             height,
             scale,
+        })
+        .map_err(|(error, job)| (error, job.fill.expect("queued fill returns with its job")))
+    }
+
+    fn supports_regions(&self) -> bool {
+        self.regions
+    }
+
+    fn submit_region(
+        &mut self,
+        identity: RenderIdentity,
+        model: Model,
+        (width, height, scale): (u32, u32, f64),
+        region: sophia_shell_protocol::ContentPixelRect,
+        fill: OwnedRingSlotFill,
+    ) -> Result<(), (String, OwnedRingSlotFill)> {
+        if !self.regions {
+            return Err(("renderer does not admit region jobs".into(), fill));
+        }
+        self.queue(RenderJob {
+            identity,
+            model,
+            width,
+            height,
+            scale,
+            fill: Some(fill),
+            region: Some(region),
         })
         .map_err(|(error, job)| (error, job.fill.expect("queued fill returns with its job")))
     }

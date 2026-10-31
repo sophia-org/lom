@@ -90,3 +90,121 @@ fn a_target_of_any_other_length_is_refused_before_rendering() {
         assert!(target.iter().all(|byte| *byte == 7));
     }
 }
+
+#[test]
+fn physical_regions_equal_full_frame_crops_and_report_actual_opacity() {
+    for (width, height, vertical) in [(1920, 24, false), (1920, 512, false), (24, 1080, true)] {
+        let mut model = model();
+        model.config.position = if vertical {
+            crate::config::Position::Left
+        } else {
+            crate::config::Position::Top
+        };
+        let mut driver = PreviewDriver::new(model, width, height, 1.0, false).unwrap();
+        let mut scene = driver.scene();
+        let mut renderer = VelloCpuRenderer::new(1, 1);
+        let mut full = vec![0; (width * height * 4) as usize];
+        render_into(&mut renderer, &mut scene, &mut full).unwrap();
+        assert!(full.chunks_exact(4).all(|p| p[3] == 255));
+        for index in 0..3 {
+            let region = if vertical {
+                ContentPixelRect {
+                    x: 0,
+                    y: (index * height / 3) as i32,
+                    width,
+                    height: height / 3,
+                }
+            } else {
+                ContentPixelRect {
+                    x: (index * width / 3) as i32,
+                    y: 0,
+                    width: width / 3,
+                    height,
+                }
+            };
+            let mut tile = vec![0xa5; (region.width * region.height * 4) as usize];
+            assert!(render_region_into(&mut renderer, &mut scene, region, &mut tile).unwrap());
+            let expected: Vec<_> = (region.y as u32..region.y as u32 + region.height)
+                .flat_map(|y| {
+                    let start = ((y * width + region.x as u32) * 4) as usize;
+                    full[start..start + region.width as usize * 4]
+                        .iter()
+                        .copied()
+                })
+                .collect();
+            assert_eq!(tile, expected, "{width}x{height} region {index}");
+        }
+    }
+    let mut empty = PreviewScene {
+        scene: Scene::new(),
+        width: 12,
+        height: 12,
+    };
+    let region = ContentPixelRect {
+        x: 4,
+        y: 0,
+        width: 4,
+        height: 12,
+    };
+    assert!(
+        !render_region_into(
+            &mut VelloCpuRenderer::new(1, 1),
+            &mut empty,
+            region,
+            &mut [255; 4 * 12 * 4]
+        )
+        .unwrap()
+    );
+}
+
+#[test]
+fn regions_refuse_out_of_bounds_and_wrong_payload_lengths() {
+    let mut scene = PreviewScene {
+        scene: Scene::new(),
+        width: 12,
+        height: 12,
+    };
+    let mut renderer = VelloCpuRenderer::new(1, 1);
+    for region in [
+        ContentPixelRect {
+            x: -1,
+            y: 0,
+            width: 4,
+            height: 12,
+        },
+        ContentPixelRect {
+            x: 10,
+            y: 0,
+            width: 4,
+            height: 12,
+        },
+        ContentPixelRect {
+            x: 0,
+            y: 10,
+            width: 12,
+            height: 4,
+        },
+        ContentPixelRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 12,
+        },
+        ContentPixelRect {
+            x: i32::MAX,
+            y: 0,
+            width: u32::MAX,
+            height: 1,
+        },
+        ContentPixelRect {
+            x: 0,
+            y: 0,
+            width: 4,
+            height: 12,
+        },
+    ] {
+        let mut target = vec![7; 4 * 12 * 4 - 1];
+        assert!(render_region_into(&mut renderer, &mut scene, region, &mut target).is_err());
+        assert!(target.iter().all(|b| *b == 7));
+    }
+}

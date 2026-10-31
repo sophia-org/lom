@@ -93,8 +93,10 @@ completes.
 The client waits for transfer admission before sending whole-row chunks, demands
 a frame, consumes its one-use permit, and submits one complete candidate. It
 waits for a nonzero native `Presented` epoch; `Prepared` alone is insufficient.
-Two resource slots per output allow the successor to present before the previous
-resource is retired, and a slot generation advances only after `Released`.
+The original two resource slots per output allowed the successor to present
+before the previous resource retired. The current CPU region owner has up to
+six bounded identities; see [retained regions](retained-regions.md). A resource
+generation still advances only after `Released`.
 Observations and retained response records are bounded to 64 per turn/queue.
 Changed output facts terminate the process so its supervisor can reconnect under
 a fresh epoch and obtain new allocations.

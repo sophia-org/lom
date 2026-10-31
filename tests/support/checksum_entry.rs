@@ -14,6 +14,14 @@ fn each_entry_selects_its_checksum_policy_for_the_same_cpu_pixels() {
         (Entry::CpuCadence, true),
         #[cfg(feature = "diagnostic-cpu-reference")]
         (Entry::CpuCadenceNoChecksum, false),
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        (Entry::CpuRegions, false),
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        (Entry::CpuRegionsFull, false),
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        (Entry::CpuRegionCadence, false),
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        (Entry::CpuRegionCadenceFull, false),
     ];
     let mut baseline = None;
     for (entry, diagnostic) in entries {

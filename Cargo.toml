@@ -36,6 +36,16 @@ name = "lom-cpu-cadence-no-checksum"
 path = "src/bin/lom-cpu-cadence-no-checksum.rs"
 required-features = ["diagnostic-cpu-reference"]
 
+[[bin]]
+name = "lom-cpu-regions"
+path = "src/bin/lom-cpu-regions.rs"
+required-features = ["diagnostic-cpu-reference"]
+
+[[bin]]
+name = "lom-cpu-regions-full"
+path = "src/bin/lom-cpu-regions-full.rs"
+required-features = ["diagnostic-cpu-reference"]
+
 [dependencies]
 libc = "0.2"
 signal-hook = "0.3.18"
@@ -60,3 +70,13 @@ sophia-image-producer = { git = "https://github.com/sophia-org/sophia-desktop-sd
 masonry_testing = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849def6eeab282561439b963862e5", default-features = false }
 
 
+
+[[bin]]
+name = "lom-cpu-region-cadence"
+path = "src/bin/lom-cpu-region-cadence.rs"
+required-features = ["diagnostic-cpu-reference"]
+
+[[bin]]
+name = "lom-cpu-region-cadence-full"
+path = "src/bin/lom-cpu-region-cadence-full.rs"
+required-features = ["diagnostic-cpu-reference"]

@@ -23,6 +23,7 @@ enum Command {
     Activation(TransactionId, ShellIndicatorActivationOutcome),
     /// Withhold SlotReleased (Accepted still goes out); false sends the held ones.
     HoldSlotReleases(bool),
+    Barrier(mpsc::Sender<()>),
     Stop,
 }
 
@@ -88,6 +89,13 @@ impl Peer {
     #[allow(dead_code)]
     pub fn hold_slot_releases(&self, hold: bool) {
         self.command.send(Command::HoldSlotReleases(hold)).unwrap();
+    }
+
+    #[allow(dead_code)]
+    pub fn synchronize(&self) {
+        let (send, receive) = mpsc::channel();
+        self.command.send(Command::Barrier(send)).unwrap();
+        receive.recv_timeout(Duration::from_secs(2)).unwrap();
     }
 
     pub fn receive(&self) -> Message {
@@ -177,6 +185,7 @@ fn run(
         while negotiated && let Ok(command) = commands.try_recv() {
             match command {
                 Command::Stop => return,
+                Command::Barrier(done) => done.send(()).unwrap(),
                 Command::HoldSlotReleases(true) => {
                     held_releases.get_or_insert_with(Vec::new);
                 }

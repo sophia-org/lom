@@ -1,9 +1,13 @@
-# Retained CPU regions: device-free feasibility
+# Retained CPU regions
 
-This is a t017 prerequisite, not a runtime implementation or native acceptance.
-The production renderer still renders a whole panel. The next candidate may
-replace only changed, non-overlapping regions while retaining the other accepted
-resources. Keep the full-frame path as the fallback.
+The ordinary CPU direct-fill path can replace changed start/center/end regions
+while retaining the other accepted resources. Device-free pixel and custody
+controls and the [native sequence pixel gate](region-sequence.md#native-pixel-qualification-2026-10-31)
+passed. The [matched CPU comparison](region-cadence.md#audited-native-result-2026-10-31)
+supports a combined reduction at h512; h24 remains inconclusive. Mason accepted
+promotion with that limit. Ordinary-rate and broader geometry qualification
+remain open.
+GPU, readback, copy-reference and fixed cadence entries keep full-frame rendering.
 
 ## Pixel checks
 
@@ -39,9 +43,8 @@ full-frame path; these fixtures are not a proof for all opaque scenes or effects
 
 `modules::panel_changes` now supplies the existing whole-panel reuse predicate.
 It distinguishes unchanged pixels, changed start/center/end groups, and full
-invalidation. The boolean reuse result is unchanged; every changed result still
-uses the full-frame renderer. No partial rendering or resource retention is
-enabled by this classifier.
+invalidation. The boolean reuse result is unchanged. The owner uses the region
+classification only after the separate geometry, opacity and budget checks below.
 
 Fixed clipping portals contain each group's logical content. The numeric-clock
 and unchanged-workspace-label restrictions are additional conservative policy,
@@ -52,10 +55,9 @@ kinds require an explicit review through exhaustive matching.
 The classifier's pixel control renders 1920-wide horizontal panels at scale 1,
 at heights 24 and 512. It compares full frames and requires the actual changed
 groups to equal the prediction. This is a test-only oracle, not production
-admission. Fractional thirds, fractional scale and vertical bars remain geometry
-work: account for seam pixels with outward bounds and test those cases before
-activation. The earlier crop tests above do not prove a change predictor for
-those geometries.
+admission. The owner sequence now additionally checks vertical bars. Fractional
+thirds and fractional scale stay full-frame; the earlier crop tests do not admit
+those geometries for incremental updates.
 
 Compare directly against the model of the raster or resident tile set referenced
 by the next candidate. The current reuse path references Presented; a future
@@ -131,21 +133,64 @@ storage survives replacement, old consumers delay release, generation+1 may
 coexist with its predecessor, and a refused candidate leaks no lease. These are
 runtime/projection tests, not native composition evidence.
 
-Before changing production, implement a bounded client resource ledger. Start with conservative
-invalidation for proven fixed geometry; configuration, scale, allocation, layout
-or unsupported paint changes fall back to full rendering. Check alternating
-resources, delayed slot/resource release, failure during a multi-offer update,
-and actions against the old Presented candidate. The retained CPU candidate
-must leave GPU/readback and DMA behavior unchanged.
+## Owner implementation
 
-Eligibility must check actual output alpha, not infer opacity from the theme.
-Initial full-frame eligibility and each replacement need checks; opacity alone
-does not prove arbitrary scene equivalence. The supported scene/geometry rules
-and fallback still need implementation. The current proof makes no production
-admission decision.
+Admission is limited to the current fixed clipping-portal view builder, no
+popout, scale one and a physical long axis divisible by three. Region offsets
+are integer pixels checked at the renderer boundary. The initial full render
+must have alpha 255 everywhere. Every replacement reports actual opacity from
+the existing conversion pass. A nonopaque result disables regions for this
+connection; unsupported geometry and full invalidation use the full-frame path.
+Opacity is necessary, not a general proof of translated rendering equivalence.
+Renderer, scene-builder and dependency changes must retain the pixel controls.
+The empirical byte-equality claim covers the tested fixture panels; replay of
+other content can round antialiased geometry differently. A popout render is
+not opacity-qualified, so closing it establishes another full frame before
+regions can resume.
 
-The native gate needs a changing clock/workspace workload with byte qualification
-and placement-cost measurement. Static cadence redirties identical content and
-cannot qualify damage savings. The initial proof changed no production code;
-the classifier now changes only how the existing boolean reuse decision is
-computed. No release artifact or native package is changed here.
+The owner has six bounded resource identities per panel, allocated lazily.
+Free, Reserved, Staging, Accepted, Resident and Retiring are distinct states.
+All replacement jobs reserve resident bytes, live-resource and identity credit
+before the first Offer. One ring slot serializes their renders and transfers.
+Each tile resolves the full scene and targets from the same immutable model;
+only its clipped pixels are rasterized and converted into the loan. Observations
+during the update are coalesced for the next update against the Presented model.
+This saves output-pixel work, not full-scene resolution or layout. Establishing
+three tiles resolves the scene three times. A region-capable incarnation keeps
+all six slots even during full fallback, including after regions are disabled;
+the legacy full-only paths retain their two-slot release backpressure. A matched
+full-versus-region experiment must account for that difference.
+
+Every candidate places a complete non-overlapping panel and carries its full
+target table. Old replaced resources retire only after the excluding candidate
+is Presented. Each successful retire enqueue advances the queue once; exact
+ResourceReleased advances its generation. Retiring slots are never borrowed.
+Interaction-only candidates re-place the complete current set without uploads.
+Output-facts changes still terminate this incarnation; there is no hot allocation
+replacement or cross-geometry reuse.
+
+If a tile is nonopaque before Offer, its Reserved slot returns directly to Free
+without spending an identity or generation. Earlier accepted but unpublished
+tiles retire normally. The old displayed set stays intact until a full-frame
+replacement presents. No partially assembled set becomes a candidate.
+
+`tests/support/region_session.rs` uses the real file/ring transport and CPU worker.
+Its peer composites the actual accepted bytes and compares each candidate against
+a fresh full render after seconds ticks, workspace changes, minute rollover,
+popout transitions, interaction retargeting and an injected nonopaque abort.
+The controls cover h24/h512, both vertical edges, non-divisible geometry, delayed
+slot/resource releases, mid-update observations and aggregate admission. A
+seconds-only update uploads one third of the panel. These are simulated-peer
+tests, not Sophia composition or scanout evidence.
+
+The existing `lom_panel_candidate` dimensions and bytes still describe the whole
+panel; producer checksum remains unavailable on this ordinary path. The appended
+`lom_panel_regions` row records placement count, uploads and uploaded bytes for
+a tiled candidate. Aborted unpublished work remains in cumulative work counters;
+it is not attributed to a displayed tile.
+
+The changing clock/workspace sequence and matched seconds-alternation cadence
+now supply separate pixel and CPU evidence linked above. Static cadence alone
+cannot qualify damage savings, and smaller upload counters alone establish
+neither displayed-byte equality nor a CPU reduction. The native results retain
+their fixture, entry, geometry and instrumentation limits.

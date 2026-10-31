@@ -19,6 +19,7 @@ fn mailbox_allows_only_one_job_and_reports_one_completion() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: false,
+        regions: false,
         #[cfg(feature = "diagnostic-cpu-reference")]
         copy: false,
         requests,
@@ -49,6 +50,7 @@ fn expired_worker_job_is_quarantined_instead_of_reused() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: false,
+        regions: false,
         #[cfg(feature = "diagnostic-cpu-reference")]
         copy: false,
         requests,
@@ -90,6 +92,7 @@ fn retained_hosts_are_bounded_by_exact_allocation_and_grant_identity() {
     let job = |identity| RenderJob {
         identity,
         fill: None,
+        region: None,
         model: model(),
         width: 800,
         height: 48,
@@ -124,6 +127,7 @@ fn an_idle_worker_clears_late_wakes_and_reports_disconnect() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: false,
+        regions: false,
         #[cfg(feature = "diagnostic-cpu-reference")]
         copy: false,
         requests,
@@ -153,6 +157,7 @@ fn a_late_cpu_completion_is_refused_and_left_with_the_quarantined_worker() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: true,
+        regions: false,
         #[cfg(feature = "diagnostic-cpu-reference")]
         copy: false,
         requests,
@@ -185,6 +190,7 @@ fn cpu_and_gpu_workers_refuse_each_others_submissions() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: true,
+        regions: false,
         #[cfg(feature = "diagnostic-cpu-reference")]
         copy: false,
         requests,
@@ -305,6 +311,7 @@ fn a_real_cpu_worker_fills_the_owned_loan_with_the_same_renderer_bytes() {
         width,
         height,
         checksum,
+        ..
     } = content.pixels
     else {
         panic!("CPU worker must return its ring loan");
@@ -323,6 +330,59 @@ fn a_real_cpu_worker_fills_the_owned_loan_with_the_same_renderer_bytes() {
         .unwrap();
     assert_eq!(offer, 1, "the owner commits the worker's exact payload");
     assert!(fill.pixels_mut().is_err());
+}
+
+#[test]
+fn a_region_job_keeps_full_layout_and_returns_the_exact_crop_loan() {
+    use sophia_shell_protocol::ContentPixelRect;
+    let mut producer = ready_ring();
+    let mut worker = RendererWorker::start_cpu().unwrap();
+    worker.timeout = Duration::from_secs(30);
+    assert!(worker.supports_regions());
+    let region = ContentPixelRect {
+        x: 4,
+        y: 0,
+        width: 4,
+        height: 48,
+    };
+    let fill = producer.acquire_owned_slot(4 * 48 * 4, 3).unwrap();
+    worker
+        .submit_region(identity(), model(), (12, 48, 1.0), region, fill)
+        .map_err(|(error, _)| error)
+        .unwrap();
+    let content = completion(&mut worker).unwrap();
+    let RenderImage::RingFill {
+        mut fill,
+        identity: rendered,
+        width,
+        height,
+        region: returned,
+        opaque,
+        checksum,
+    } = content.pixels
+    else {
+        panic!("region worker lost its loan");
+    };
+    assert_eq!(
+        (rendered, width, height, returned),
+        (identity(), 4, 48, Some(region))
+    );
+    assert!(opaque);
+    assert_eq!(checksum, None);
+    let mut driver = PreviewDriver::new(model(), 12, 48, 1.0, false).unwrap();
+    let (mut scene, targets) = driver.scene_and_targets();
+    assert_eq!(content.targets, targets);
+    let mut full = vec![0; 12 * 48 * 4];
+    crate::render::cpu::render_into(&mut VelloCpuRenderer::new(1, 1), &mut scene, &mut full)
+        .unwrap();
+    let crop: Vec<_> = full
+        .chunks_exact(12 * 4)
+        .flat_map(|row| row[4 * 4..8 * 4].iter().copied())
+        .collect();
+    assert_eq!(fill.pixels_mut().unwrap(), crop);
+    producer.abort_owned_slot(&mut fill).unwrap();
+    assert!(producer.ready());
+    assert!(producer.offer(1).is_none());
 }
 
 #[test]
@@ -353,6 +413,7 @@ fn a_late_queued_cpu_fill_is_refused_and_faults_only_when_quarantine_ends() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: true,
+        regions: false,
         #[cfg(feature = "diagnostic-cpu-reference")]
         copy: false,
         requests,
@@ -368,6 +429,8 @@ fn a_late_queued_cpu_fill_is_refused_and_faults_only_when_quarantine_ends() {
                 width: 8,
                 height: 48,
                 checksum: Some(0),
+                region: None,
+                opaque: false,
             },
             targets: Vec::new(),
         }))
@@ -395,6 +458,7 @@ fn refused_cpu_submissions_return_the_real_loan_unspent() {
         wake: Arc::new(crate::wake::Wake::new().unwrap()),
         dma: false,
         cpu: true,
+        regions: false,
         #[cfg(feature = "diagnostic-cpu-reference")]
         copy: false,
         requests,
