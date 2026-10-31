@@ -2,6 +2,9 @@ use super::*;
 use crate::config::parse_shell_config;
 use chrono::{DateTime, Utc};
 
+#[path = "redraw_attribution.rs"]
+mod redraw_attribution;
+
 fn model() -> Model {
     let (config, theme) =
         parse_shell_config(include_str!("../../examples/minimal/shell.kdl")).unwrap();

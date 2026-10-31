@@ -239,6 +239,13 @@ standalone `RingProducer`: refused submissions return the loan, a late queued
 fill is never received, and a failed render faults the ring before the
 completion wake. Neither opens a GPU or display.
 
+The nested `tests/support/redraw_attribution.rs` uses that same private worker
+boundary for offscreen phase attribution: retained scene preparation, the
+existing raster/conversion/checksum functions, and actual SDK mapped loans on
+separate owner and worker threads. Its normal test checks saved h24/h512 scene
+checksums and byte equality with the production render function. The explicitly
+ignored release measurement adds no runtime instrumentation or public API.
+
 `tests/support/service_fill_snapshot.rs` is mounted privately from the ring-fill
 owner to mutate one owner snapshot field between completion and commit over a
 real SDK loan and ring peer. With the diagnostic feature, the same harness runs
