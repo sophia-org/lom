@@ -477,13 +477,16 @@ preserves means, limits and the pre-native CPU01 launcher refusal.
 Qualification receipt: `~/.local/state/lom-cpu-opaque-qualification-01/RECEIPT.json`,
 SHA256 `cfc1a12cda29dbbb777b167a662582dc57b46502675f4a0805db95b9a68004d7`.
 
-The next investigation follows the paired plan's Session marginal-cost step:
-rank existing Phase 0 repeated work and require a distinct mechanism with a
-predicted counter change. S1 regressed and stays parked. t017 remains the
-gate before changing-region rendering: exact retained-placement custody,
-tile-edge pixel equivalence and placement cost still need proof. Neither
-the static cadence workload nor these two qualified pass reductions close
-t022 or qualify a damage mechanism.
+The paired Session marginal-cost investigation qualified the opaque validation
+shortcut, now on Sophia master `abe9b2fd`. S1 remains parked. The next t017
+step is [retained CPU region feasibility](../../retained-regions.md): tested
+opaque crops and clock/workspace reconstruction are byte-equal, while a
+transparent fractional-paint counterexample requires full-frame fallback.
+Retained resources avoid ingestion, but the current Session compositor still
+damages every placement and uploads every CPU layer on repaint. Generic
+three-placement custody/projection tests passed in Sophia `3f5ecd1b`; a bounded
+client ledger and native placement cost remain prerequisites. Neither static cadence nor a raster-only screen closes
+t022 or qualifies damage savings.
 
 ## Connections
 
