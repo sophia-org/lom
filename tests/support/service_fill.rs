@@ -113,7 +113,7 @@ impl ContentRenderer for FillRenderer {
                 identity,
                 width,
                 height,
-                checksum: 0,
+                checksum: Some(0),
             },
             targets: Vec::new(),
         }))

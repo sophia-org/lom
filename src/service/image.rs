@@ -18,8 +18,8 @@ pub enum RenderImage {
         width: u32,
         /// Rendered pixel height.
         height: u32,
-        /// Checksum of the converted wire bytes.
-        checksum: u64,
+        /// Diagnostic checksum of the converted wire bytes, when requested.
+        checksum: Option<u64>,
     },
 }
 
@@ -80,7 +80,7 @@ impl RenderImage {
         match self {
             Self::Cpu(pixels) => Some(super::pixel_checksum(pixels.bytes())),
             Self::Dma(_) => None,
-            Self::RingFill { checksum, .. } => Some(*checksum),
+            Self::RingFill { checksum, .. } => *checksum,
         }
     }
 }

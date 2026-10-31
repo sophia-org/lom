@@ -366,7 +366,7 @@ fn both_arms_repeat_identical_bytes_to_the_quota_and_then_stay_connected() {
         let worker = if copy {
             RendererWorker::start_cpu_copy_reference_until_stopped(&stop, wake.as_fd())
         } else {
-            RendererWorker::start_cpu_until_stopped(&stop, wake.as_fd())
+            RendererWorker::start_cpu_until_stopped(&stop, wake.as_fd(), true)
         };
         let mut session = session(worker.unwrap(), 1);
         assert_eq!(session.service.renderer.uses_ring_fill(), !copy);

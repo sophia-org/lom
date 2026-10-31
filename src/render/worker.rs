@@ -87,7 +87,7 @@ fn quarantined(cpu: bool) -> String {
 )]
 enum Backend {
     Gpu(GpuPreview, bool),
-    Cpu(VelloCpuRenderer),
+    Cpu(VelloCpuRenderer, bool),
     #[cfg(feature = "diagnostic-cpu-reference")]
     CpuCopy(VelloCpuRenderer),
 }
@@ -107,12 +107,12 @@ fn render(
         (Backend::Gpu(renderer, false), None) => {
             RenderImage::Cpu(renderer.readback_content(&mut scene)?)
         }
-        (Backend::Cpu(renderer), Some(mut fill)) => {
+        (Backend::Cpu(renderer, checksum), Some(mut fill)) => {
             let pixels = fill
                 .pixels_mut()
                 .map_err(|error| format!("owned ring fill: {error:?}"))?;
             super::cpu::render_into(renderer, &mut scene, pixels)?;
-            let checksum = crate::service::pixel_checksum(pixels);
+            let checksum = checksum.then(|| crate::service::pixel_checksum(pixels));
             RenderImage::RingFill {
                 fill,
                 identity,
@@ -166,10 +166,11 @@ impl RendererWorker {
     }
 
     /// Explicit Vello CPU worker filling owner-acquired ring loans. It reads
-    /// no GPU grant and is never selected as a fallback.
+    /// no GPU grant and is never selected as a fallback. Diagnostic pixel
+    /// checksums are omitted.
     pub fn start_cpu() -> Result<Self, String> {
         Self::start_backend(false, true, None, || {
-            Ok((Backend::Cpu(VelloCpuRenderer::new(1, 1)), None))
+            Ok((Backend::Cpu(VelloCpuRenderer::new(1, 1), false), None))
         })
         .map(|(worker, _)| worker)
     }
@@ -177,9 +178,10 @@ impl RendererWorker {
     pub(crate) fn start_cpu_until_stopped(
         stop: &AtomicBool,
         fd: BorrowedFd<'_>,
+        checksum: bool,
     ) -> Result<Self, String> {
-        Self::start_backend(false, true, Some((stop, fd)), || {
-            Ok((Backend::Cpu(VelloCpuRenderer::new(1, 1)), None))
+        Self::start_backend(false, true, Some((stop, fd)), move || {
+            Ok((Backend::Cpu(VelloCpuRenderer::new(1, 1), checksum), None))
         })
         .map(|(worker, _)| worker)
     }

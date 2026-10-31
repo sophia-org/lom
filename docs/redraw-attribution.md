@@ -85,3 +85,29 @@ release condition. Any proposed ordinary-path reduction must preserve exact
 diagnostic pixel qualification and state its logging/schema change explicitly.
 Conversion remains a separate evidenced target. Neither change is implemented
 or credited with a speedup by this attribution.
+
+## Diagnostic checksum policy candidate, 2026-10-31
+
+Ordinary CPU fills omit the hash pass; the two diagnostic binaries explicitly
+retain it. The existing schema-2 candidate record reports `checksum=unavailable`
+for an ordinary CPU fill, including when the diagnostic feature is compiled.
+This changes diagnostic observability, not pixels, protocol records or custody.
+Consumers that require schema 1 must use a diagnostic entry; a zero or reused
+checksum is never substituted. `RenderImage::RingFill.checksum` is now optional.
+GPU readback still hashes on the owner, and DMA still reports unavailable.
+
+The normal controls exercise actual entry dispatch, exact bytes at h24/h512,
+and unchanged ring custody. For an explicitly requested release-only local
+comparison, run `render::worker::tests::redraw_attribution::measure_checksum_policy`
+with the same command form above. It calls the actual worker render function
+on the test's calling thread, hash-on/off/off/on at each height, each block
+with 120 warmups and 200 measured calls. Pixel/checksum validation and loan
+abort occur outside the measured call, identically for both policies. Model
+construction, dispatch, commit and host work are excluded; this is not an
+asynchronous-worker or native measurement. Timer costs remain included.
+
+The existing cadence binaries still hash every frame, so an unchanged cadence
+comparison cannot qualify this ordinary-path saving. A fresh native design must
+separate pixel qualification from the no-hash performance arm and report the
+observability difference. No native performance benefit or production adoption
+follows from this candidate's offline checks.

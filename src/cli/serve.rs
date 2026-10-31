@@ -86,7 +86,7 @@ fn start_renderer(
     }
     entry.admit(renderer)?;
     if renderer == Renderer::Cpu {
-        let worker = RendererWorker::start_cpu_until_stopped(stop, wake)?;
+        let worker = RendererWorker::start_cpu_until_stopped(stop, wake, false)?;
         println!("lom_renderer schema=1 renderer=vello-cpu source=owned-ring-fill gpu=not-used");
         return Ok(worker);
     }

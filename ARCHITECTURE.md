@@ -376,6 +376,14 @@ records add `diagnostic=cpu-reference`. The feature-on ordinary `check-config`
 still parses that panel; a default build refuses the spelling. The reference
 exists to compare the two CPU arms and is never a production mode or fallback.
 
+Pixel FNV64 is diagnostic evidence, not content admission or release evidence.
+Ordinary CPU ring fills omit the checksum pass and report
+`lom_panel_candidate schema=2 ... checksum=unavailable`; `RingFill.checksum`
+is `None`. Both diagnostic entries explicitly request the full converted-byte
+hash, preserving schema 1 and the exact existing FNV64 values. Enabling the
+feature alone does not enable hashes in ordinary `lom`. No environment or
+config switch selects this policy. GPU readback and DMA behavior are unchanged.
+
 The same feature builds `lom-cpu-cadence`, which also accepts exactly
 `--serve`. It admits and refuses renderers as `lom-cpu-reference` does, starts
 the same arms with the same renderer record, and also refuses any

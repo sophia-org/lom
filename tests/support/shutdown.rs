@@ -11,6 +11,8 @@ use std::{
 };
 
 use crate::service::tests::{files_peer, files_wire};
+#[path = "checksum_entry.rs"]
+mod checksum_entry;
 const GRANT: ContentGrant = ContentGrant {
     connection_epoch: files_wire::EPOCH,
     content_grant_epoch: 9,
