@@ -25,14 +25,20 @@ impl<R: ContentRenderer> ShellService<R> {
         if self.rendering_panel.is_some() && self.renderer.completion_fd().is_none() {
             timeout = timeout.min(IDLE_POLL);
         }
-        if self.panels.iter().any(|panel| {
-            panel
-                .model
-                .config
-                .modules
-                .iter()
-                .any(|module| module.kind == ModuleKind::Clock)
-        }) {
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        if let Some(at) = self.sequence.as_ref().and_then(|s| s.next_at) {
+            timeout = timeout.min(at.saturating_duration_since(now));
+        }
+        if self.live_model_inputs()
+            && self.panels.iter().any(|panel| {
+                panel
+                    .model
+                    .config
+                    .modules
+                    .iter()
+                    .any(|module| module.kind == ModuleKind::Clock)
+            })
+        {
             let wall = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default();

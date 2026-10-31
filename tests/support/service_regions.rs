@@ -1,6 +1,9 @@
 use super::*;
+#[cfg(feature = "diagnostic-cpu-reference")]
+#[path = "service_sequence.rs"]
+mod sequence;
 #[path = "region_session.rs"]
-mod session;
+pub(crate) mod session;
 
 #[test]
 fn integer_thirds_cover_each_pixel_exactly_once_on_both_axes() {

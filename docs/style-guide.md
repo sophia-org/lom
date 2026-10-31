@@ -120,6 +120,14 @@ ring bytes across updates and delayed releases. A test-only owner clock fixes
 the observation sequence without exposing a production clock or inspection API.
 These controls prove client custody and pixels, not native composition.
 
+With the diagnostic feature, `service_sequence.rs` exercises fixed fixture
+phases through that peer, including live-feed isolation and refused input.
+The test-only re-export of its peer constructor lets `region_entry.rs` run the
+actual entry startup and owner loop in a subprocess and pin stdout ordering.
+It bypasses authentication/config resolution, which `region_cli.rs` checks
+separately, and stops after one Presented; the nine-phase control checks the
+complete sequence. No production inspection API or injected phase clock exists.
+
 Repository-tool tests live in `tools/tests/` and exercise the actual command or
 observable behavior. Gate regressions must prove both acceptance and rejection,
 especially at threshold boundaries; a helper-only assertion is not sufficient.

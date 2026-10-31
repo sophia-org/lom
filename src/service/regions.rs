@@ -85,7 +85,11 @@ pub(super) fn thirds(
 impl Panel {
     /// Plan from the exact current raster model, never accumulated observations.
     /// Reservation and negotiated aggregate budgets are checked by the owner.
-    pub(super) fn update_plan(&self, supports_regions: bool) -> Option<UpdatePlan> {
+    pub(super) fn update_plan(
+        &self,
+        supports_regions: bool,
+        full_only: bool,
+    ) -> Option<UpdatePlan> {
         let full = full_rect(self.allocation.pixel.width, self.allocation.pixel.height);
         let regions = thirds(
             full.width,
@@ -104,7 +108,8 @@ impl Panel {
             .presented
             .as_ref()
             .map(|p| panel_changes(&p.model, &self.model));
-        let tiled = eligible
+        let tiled = !full_only
+            && eligible
             && self.presented.as_ref().is_some_and(|p| p.raster.opaque)
             && matches!(changes, Some(PanelChanges::Regions(_)));
         let mut next = RasterSet::default();
@@ -164,4 +169,4 @@ impl Panel {
 
 #[cfg(test)]
 #[path = "../../tests/support/service_regions.rs"]
-mod tests;
+pub(super) mod tests;

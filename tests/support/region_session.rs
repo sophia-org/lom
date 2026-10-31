@@ -29,7 +29,7 @@ const OUTPUT: ContentOutputId = ContentOutputId {
 };
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
-pub(super) struct Worker {
+pub(crate) struct Worker {
     real: RendererWorker,
     partial: bool,
     pub(super) partial_completions: usize,
@@ -110,6 +110,10 @@ pub(super) enum Control {
     HoldSlots(bool),
     HoldResources(bool),
     Barrier(mpsc::Sender<()>),
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    Indicators(u64),
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    Action(ContentAction),
     Stop,
 }
 
@@ -132,6 +136,8 @@ fn server(
 ) {
     let caps = SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
+        | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
+        | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
         | IMAGE_CAPABILITY_OWNED_RING;
     let peer = Peer::new(listener.accept().unwrap().0, caps);
     peer.content(
@@ -201,6 +207,29 @@ fn server(
                     done.send(()).unwrap();
                 }
                 Control::HoldSlots(hold) => peer.hold_slot_releases(hold),
+                #[cfg(feature = "diagnostic-cpu-reference")]
+                Control::Indicators(generation) => peer.indicators(
+                    TransactionId::from_raw(90 + generation),
+                    ShellIndicatorSnapshot {
+                        connection_epoch: GRANT.connection_epoch,
+                        generation,
+                        active_output: Some(OutputId::from_raw(OUTPUT.id)),
+                        statuses: Vec::new(),
+                        indicators: vec![ShellIndicator {
+                            output: OutputId::from_raw(OUTPUT.id),
+                            indicator: 77,
+                            action: 78,
+                            slot: 1,
+                            state_bits: 1,
+                            label: "live replacement".into(),
+                        }],
+                    },
+                ),
+                #[cfg(feature = "diagnostic-cpu-reference")]
+                Control::Action(action) => peer.content(
+                    TransactionId::from_raw(101),
+                    ShellContentRecord::Action(action),
+                ),
                 Control::HoldResources(hold) => {
                     hold_resources = hold;
                     if !hold {
@@ -365,6 +394,15 @@ impl Session {
     }
 
     pub(super) fn geometry(width: u32, height: u32, position: Position) -> Self {
+        Self::with_renderer(
+            width,
+            height,
+            position,
+            RendererWorker::start_cpu().unwrap(),
+        )
+    }
+
+    fn with_renderer(width: u32, height: u32, position: Position, real: RendererWorker) -> Self {
         let path = std::env::temp_dir().join(format!(
             "lom-regions-{}-{}.sock",
             std::process::id(),
@@ -376,6 +414,8 @@ impl Session {
         let server = std::thread::spawn(move || server(listener, width, height, controls, send));
         let caps = SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
             | SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
+            | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
+            | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
             | IMAGE_CAPABILITY_OWNED_RING;
         let connection = ShellConnection::connect_files(
             &path,
@@ -399,7 +439,7 @@ impl Session {
             .replace("    start {","    center { clock \"minutes\" { format \"%H:%M\"; }; }\n    end { clock \"clock\" { format \"%H:%M:%S\"; }; }\n    start {");
         let (config, theme) = parse_shell_config(&source).unwrap();
         let renderer = Worker {
-            real: RendererWorker::start_cpu().unwrap(),
+            real,
             partial: false,
             partial_completions: 0,
             fault_at: None,
@@ -478,6 +518,10 @@ impl Session {
             }
             std::thread::yield_now();
         }
+        self.received_frame(expected)
+    }
+
+    fn received_frame(&mut self, expected: &Model) -> Frame {
         let frame = self.frames.recv_timeout(Duration::from_secs(1)).unwrap();
         let presented = self.service.panels[0].presented.as_ref().unwrap();
         assert_eq!(frame.generation, presented.candidate_generation);
@@ -498,6 +542,23 @@ impl Session {
         );
         frame
     }
+}
+
+#[cfg(feature = "diagnostic-cpu-reference")]
+pub(crate) fn region_record_session_for_tests(
+    worker: RendererWorker,
+    run: impl FnOnce(&mut ShellService<Worker>, fn(&ShellService<Worker>) -> bool),
+) {
+    let mut session = Session::with_renderer(1920, 24, Position::Top, worker);
+    run(&mut session.service, |service| {
+        service.panels[0].presented.is_some()
+    });
+    let model = session.service.panels[0].model.clone();
+    let frame = session.received_frame(&model);
+    assert_eq!(
+        (frame.generation, frame.uploads, frame.upload_bytes),
+        (1, 1, 184320)
+    );
 }
 
 impl Drop for Session {

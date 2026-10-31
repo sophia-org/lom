@@ -117,6 +117,24 @@ pub fn run_cpu_cadence_no_checksum(arguments: Vec<OsString>) -> Result<(), Strin
     serve::run(serve::Entry::CpuCadenceNoChecksum, None, None)
 }
 
+/// Fixed diagnostic fixture phases through CPU region updates; only `--serve`.
+#[cfg(feature = "diagnostic-cpu-reference")]
+pub fn run_cpu_regions(arguments: Vec<OsString>) -> Result<(), String> {
+    if arguments.len() != 1 || arguments[0] != "--serve" {
+        return Err("lom-cpu-regions accepts exactly --serve".into());
+    }
+    serve::run(serve::Entry::CpuRegions, None, None)
+}
+
+/// The same fixture phases through full-frame updates; only `--serve`.
+#[cfg(feature = "diagnostic-cpu-reference")]
+pub fn run_cpu_regions_full(arguments: Vec<OsString>) -> Result<(), String> {
+    if arguments.len() != 1 || arguments[0] != "--serve" {
+        return Err("lom-cpu-regions-full accepts exactly --serve".into());
+    }
+    serve::run(serve::Entry::CpuRegionsFull, None, None)
+}
+
 fn options(arguments: &[OsString], allowed: &[&str]) -> Result<BTreeMap<String, OsString>, String> {
     if !arguments.len().is_multiple_of(2) {
         return Err("unsupported arguments: expected flag/value pairs".into());

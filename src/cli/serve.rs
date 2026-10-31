@@ -31,6 +31,10 @@ pub(super) enum Entry {
     /// Fixed cadence using ordinary CPU direct fill without diagnostic hashing.
     #[cfg(feature = "diagnostic-cpu-reference")]
     CpuCadenceNoChecksum,
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    CpuRegions,
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    CpuRegionsFull,
 }
 
 #[cfg(feature = "diagnostic-cpu-reference")]
@@ -39,6 +43,15 @@ pub(super) const REFUSE_GPU: &str = "lom-cpu-reference refuses the GPU renderer"
 pub(super) const REFUSE_GPU_CADENCE: &str = "lom-cpu-cadence refuses the GPU renderer";
 
 impl Entry {
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    fn region_sequence(self) -> Option<bool> {
+        match self {
+            Self::CpuRegions => Some(false),
+            Self::CpuRegionsFull => Some(true),
+            _ => None,
+        }
+    }
+
     fn admit(self, renderer: Renderer) -> Result<(), String> {
         let (allowed, refusal): (&[Renderer], &str) = match self {
             Entry::Ordinary => (
@@ -56,6 +69,11 @@ impl Entry {
             Entry::CpuCadenceNoChecksum => (
                 &[Renderer::Cpu],
                 "lom-cpu-cadence-no-checksum requires the cpu renderer",
+            ),
+            #[cfg(feature = "diagnostic-cpu-reference")]
+            Entry::CpuRegions | Entry::CpuRegionsFull => (
+                &[Renderer::Cpu],
+                "region sequence requires the cpu renderer",
             ),
         };
         if allowed.contains(&renderer) {
@@ -87,6 +105,16 @@ fn start_renderer(
     stop: &AtomicBool,
     wake: BorrowedFd<'_>,
 ) -> Result<RendererWorker, String> {
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    if let Some(full) = entry.region_sequence() {
+        entry.admit(renderer)?;
+        let worker = RendererWorker::start_cpu_until_stopped(stop, wake, false)?;
+        println!(
+            "lom_renderer schema=1 renderer=vello-cpu source=owned-ring-fill gpu=not-used diagnostic=cpu-region-sequence role={}",
+            if full { "full" } else { "regions" }
+        );
+        return Ok(worker);
+    }
     #[cfg(feature = "diagnostic-cpu-reference")]
     if entry == Entry::CpuCadenceNoChecksum {
         entry.admit(renderer)?;
@@ -168,6 +196,13 @@ fn serve<R: ContentRenderer>(
         .map_err(|error| format!("{}:{error}", Path::new(&config_path).display()))?;
     validate_theme(&config, &theme)?;
     let (dma, renderer) = resolve(entry, dma, renderer, &config)?;
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    if entry.region_sequence().is_some() {
+        crate::service::sequence::validate_config(&config)?;
+        if std::env::var_os("SOPHIA_SHELL_WORK_STATS").is_some() {
+            return Err("region sequence refuses SOPHIA_SHELL_WORK_STATS".into());
+        }
+    }
     // The cadence owns the work counters from zero; its samples replace them.
     #[cfg(feature = "diagnostic-cpu-reference")]
     if matches!(entry, Entry::CpuCadence | Entry::CpuCadenceNoChecksum)
@@ -254,6 +289,10 @@ fn drive<R: ContentRenderer>(
         service.enable_diagnostic_cadence()?;
         println!("{}", super::cpu_reference::cadence_record());
     }
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    if let Some(full) = entry.region_sequence() {
+        service.enable_region_sequence(full)?;
+    }
     let result = (|| {
         while !stop(service) {
             let presented = service.step()?;
@@ -267,6 +306,10 @@ fn drive<R: ContentRenderer>(
     reporter.emit(service, true)?;
     #[cfg(feature = "diagnostic-cpu-reference")]
     if let Some(record) = service.cadence_final() {
+        println!("{record}");
+    }
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    if let Some(record) = service.region_sequence_final() {
         println!("{record}");
     }
     result

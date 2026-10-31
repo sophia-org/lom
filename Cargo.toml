@@ -36,6 +36,16 @@ name = "lom-cpu-cadence-no-checksum"
 path = "src/bin/lom-cpu-cadence-no-checksum.rs"
 required-features = ["diagnostic-cpu-reference"]
 
+[[bin]]
+name = "lom-cpu-regions"
+path = "src/bin/lom-cpu-regions.rs"
+required-features = ["diagnostic-cpu-reference"]
+
+[[bin]]
+name = "lom-cpu-regions-full"
+path = "src/bin/lom-cpu-regions-full.rs"
+required-features = ["diagnostic-cpu-reference"]
+
 [dependencies]
 libc = "0.2"
 signal-hook = "0.3.18"

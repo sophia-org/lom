@@ -6,6 +6,8 @@ impl<R: ContentRenderer> ShellService<R> {
         self.renderer.clear_completion_wake()?;
         self.progressed = false;
         self.observe()?;
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        self.advance_sequence(Instant::now())?;
         if self
             .panels
             .iter()
@@ -22,7 +24,7 @@ impl<R: ContentRenderer> ShellService<R> {
         let second = self
             .observed_clock
             .map_or(second, |now| now.timestamp() as u64);
-        if second != self.last_second {
+        if self.live_model_inputs() && second != self.last_second {
             self.last_second = second;
             let now = observed_time();
             #[cfg(test)]
@@ -194,7 +196,10 @@ impl<R: ContentRenderer> ShellService<R> {
         {
             return Ok(None);
         }
-        let Some(plan) = panel.update_plan(self.region_rendering()) else {
+        let full_only = false;
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        let full_only = self.sequence.as_ref().map_or(full_only, |s| s.full);
+        let Some(plan) = panel.update_plan(self.region_rendering(), full_only) else {
             return Ok(None);
         };
         let mut bytes = 0;

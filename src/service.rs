@@ -8,6 +8,8 @@ mod presentation;
 mod regions;
 mod ring_fill;
 mod scheduler;
+#[cfg(feature = "diagnostic-cpu-reference")]
+pub(crate) mod sequence;
 mod statistics;
 mod target_generations;
 mod wait;
@@ -17,6 +19,8 @@ pub(crate) use cadence::QUOTA as CADENCE_QUOTA;
 pub(crate) use cadence::cpu_record_session_for_tests;
 pub use image::RenderImage;
 use presentation::PendingPresentation;
+#[cfg(all(test, feature = "diagnostic-cpu-reference"))]
+pub(crate) use regions::tests::session::region_record_session_for_tests;
 use regions::{RESOURCE_SLOTS, RasterSet, UpdatePlan};
 pub use statistics::WorkStatistics;
 
@@ -265,6 +269,8 @@ pub struct ShellService<R> {
     statistics: Option<WorkStatistics>,
     #[cfg(feature = "diagnostic-cpu-reference")]
     cadence: Option<cadence::Cadence>,
+    #[cfg(feature = "diagnostic-cpu-reference")]
+    sequence: Option<sequence::Sequence>,
 }
 
 impl<R: ContentRenderer> ShellService<R> {
@@ -384,6 +390,8 @@ impl<R: ContentRenderer> ShellService<R> {
             statistics: None,
             #[cfg(feature = "diagnostic-cpu-reference")]
             cadence: None,
+            #[cfg(feature = "diagnostic-cpu-reference")]
+            sequence: None,
         };
         service.allocate_panels(allowance)?;
         Ok(service)
@@ -523,6 +531,9 @@ impl<R: ContentRenderer> ShellService<R> {
                 return Err("indicator snapshot belongs to a different connection".into());
             }
             self.latest_indicators = Some(snapshot.clone());
+            if !self.live_model_inputs() {
+                continue;
+            }
             let workspaces = workspace_snapshot(&snapshot);
             for panel in &mut self.panels {
                 let mut next = panel.model.clone();
@@ -566,6 +577,9 @@ impl<R: ContentRenderer> ShellService<R> {
                 .map_err(|error| format!("ordered content lifecycle: {error:?}"))?;
             let record = dispatch.record;
             if let ShellContentRecord::Action(action) = record {
+                if !self.live_model_inputs() {
+                    return Err("fixture sequence refuses content input".into());
+                }
                 if dispatch.action != Some(ContentActionDispatch::Cancelled) {
                     self.handle_content_action(
                         action,
@@ -598,6 +612,14 @@ impl<R: ContentRenderer> ShellService<R> {
             self.pending_content.push_back((transaction, record));
         }
         Ok(())
+    }
+
+    fn live_model_inputs(&self) -> bool {
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        if self.sequence.is_some() {
+            return false;
+        }
+        true
     }
 
     fn handle_content_action(

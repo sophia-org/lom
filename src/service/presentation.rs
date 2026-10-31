@@ -798,6 +798,14 @@ impl<R: ContentRenderer> ShellService<R> {
         });
         #[cfg(feature = "diagnostic-cpu-reference")]
         self.cadence_presented(cadence.0, cadence.1, cadence.2)?;
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        self.sequence_presented(
+            pending.panel,
+            pending.candidate,
+            pending.uploads,
+            pending.upload_bytes,
+            pending.raster_reused,
+        )?;
         Ok(())
     }
 
