@@ -22,6 +22,9 @@ use std::{path::Path, time::Duration};
 pub(super) enum Entry {
     /// `lom --serve`: GPU or the production CPU direct fill.
     Ordinary,
+    /// Explicit default-off SFT; CPU owned-ring only, same scene and service.
+    #[cfg(feature = "experimental-frame-transactions")]
+    FrameTransactions,
     /// `lom-cpu-reference --serve`: only the Vello CPU direct and copy arms.
     #[cfg(feature = "diagnostic-cpu-reference")]
     CpuReference,
@@ -47,6 +50,14 @@ pub(super) const REFUSE_GPU: &str = "lom-cpu-reference refuses the GPU renderer"
 pub(super) const REFUSE_GPU_CADENCE: &str = "lom-cpu-cadence refuses the GPU renderer";
 
 impl Entry {
+    fn revision(self) -> u16 {
+        #[cfg(feature = "experimental-frame-transactions")]
+        if self == Self::FrameTransactions {
+            return 13;
+        }
+        10
+    }
+
     #[cfg(feature = "diagnostic-cpu-reference")]
     fn region_sequence(self) -> Option<bool> {
         match self {
@@ -71,6 +82,8 @@ impl Entry {
                 &[Renderer::Gpu, Renderer::Cpu],
                 "the cpu-copy-reference renderer requires lom-cpu-reference",
             ),
+            #[cfg(feature = "experimental-frame-transactions")]
+            Entry::FrameTransactions => (&[Renderer::Cpu], "SFT requires the cpu renderer"),
             #[cfg(feature = "diagnostic-cpu-reference")]
             Entry::CpuReference => (&[Renderer::Cpu, Renderer::CpuCopyReference], REFUSE_GPU),
             #[cfg(feature = "diagnostic-cpu-reference")]
@@ -244,18 +257,24 @@ fn serve<R: ContentRenderer>(
     if allowance == 0 {
         return Err("admitted shell allowance must be positive".into());
     }
+    let revision = entry.revision();
     let capabilities = SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
         | SOPHIA_SHELL_CAPABILITY_INDICATOR_ACTIVATION
         | sophia_shell_client::IMAGE_CAPABILITY_OWNED_RING
+        | if revision == 13 {
+            sophia_shell_protocol::shell_files::SHELL_FRAME_CAPABILITY
+        } else {
+            0
+        }
         | if dma {
             sophia_shell_client::IMAGE_CAPABILITY_DMA_BUF
         } else {
             0
         };
-    // The owned ring requires r10 and its capability; there is no
+    // Ordinary owned ring uses r10; only the explicit SFT entry requests r13. No
     // sealed or byte fallback. The image endpoint directory is the parent of the
     // exact role socket path.
     let endpoint_dir = Path::new(&socket)
@@ -263,8 +282,8 @@ fn serve<R: ContentRenderer>(
         .map(|parent| parent.to_path_buf())
         .ok_or("shell socket path has no parent directory")?;
     let options = ShellClientOptions {
-        minimum_revision: 10,
-        maximum_revision: 10,
+        minimum_revision: revision,
+        maximum_revision: revision,
         required_capabilities: capabilities,
         handshake_timeout: Duration::from_secs(5),
     };

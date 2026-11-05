@@ -79,6 +79,28 @@ fn invalid_image_source_fails_before_service_startup() {
 }
 
 #[test]
+fn frame_protocol_is_explicit_and_feature_gated() {
+    for value in ["auto", "13", ""] {
+        let result = run(&["--serve", "--frame-protocol", value]);
+        assert_eq!(result.status.code(), Some(2));
+        assert!(
+            String::from_utf8_lossy(&result.stderr)
+                .contains("--frame-protocol must be legacy or sft")
+        );
+    }
+    let legacy = run(&["--serve", "--frame-protocol", "legacy"]);
+    assert!(String::from_utf8_lossy(&legacy.stderr).contains("SOPHIA_SHELL_9P_SOCKET is required"));
+    let sft = run(&["--serve", "--frame-protocol", "sft"]);
+    assert_eq!(sft.status.code(), Some(2));
+    let expected = if cfg!(feature = "experimental-frame-transactions") {
+        "SOPHIA_SHELL_9P_SOCKET is required"
+    } else {
+        "SFT requires a build with experimental-frame-transactions"
+    };
+    assert!(String::from_utf8_lossy(&sft.stderr).contains(expected));
+}
+
+#[test]
 fn protected_service_refuses_retired_transport_before_loading_config() {
     for retired in ["", "/retired"] {
         for files in [None, Some("/files")] {

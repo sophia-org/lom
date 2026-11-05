@@ -26,6 +26,43 @@ const OUTPUT: ContentOutputId = ContentOutputId {
 };
 const CHILD: &str = "cli::serve::tests::shutdown_child";
 
+#[cfg(feature = "experimental-frame-transactions")]
+#[test]
+fn sft_entry_selects_r13_and_refuses_gpu_or_dma_before_connecting() {
+    let (config, _) = parse_shell_config(include_str!("../../examples/minimal/shell.kdl")).unwrap();
+    assert_eq!(Entry::Ordinary.revision(), 10);
+    assert_eq!(Entry::FrameTransactions.revision(), 13);
+    assert_eq!(
+        resolve(
+            Entry::FrameTransactions,
+            Some(false),
+            Some(crate::config::Renderer::Cpu),
+            &config
+        ),
+        Ok((false, crate::config::Renderer::Cpu))
+    );
+    assert!(
+        resolve(
+            Entry::FrameTransactions,
+            Some(false),
+            Some(crate::config::Renderer::Gpu),
+            &config
+        )
+        .unwrap_err()
+        .contains("SFT requires the cpu renderer")
+    );
+    assert!(
+        resolve(
+            Entry::FrameTransactions,
+            Some(true),
+            Some(crate::config::Renderer::Cpu),
+            &config
+        )
+        .unwrap_err()
+        .contains("owned-ring")
+    );
+}
+
 struct Renderer(PathBuf);
 impl Drop for Renderer {
     fn drop(&mut self) {

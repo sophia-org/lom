@@ -42,7 +42,9 @@ meets its launch and resource-accounting gates.
 
 The default-off [SFT producer](docs/native-frame-transactions.md) preserves
 these owners and the retained CPU region plan. It changes whole-frame admission
-on an explicitly supplied r13 connection; the normal CLI still selects r10.
+on an explicitly selected r13 connection; the normal CLI still selects r10.
+The default-off feature also exposes `--frame-protocol sft` for CPU owned-ring
+rendering; the owner must separately permit that negotiation.
 
 | Owner | Responsibilities |
 | --- | --- |

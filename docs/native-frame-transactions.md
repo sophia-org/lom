@@ -2,9 +2,13 @@
 
 Status: default-off source prototype and device-free producer tests. The
 `experimental-frame-transactions` Cargo feature accepts an explicitly supplied
-r13 connection only with a direct CPU ring renderer. The CLI continues to
-request r10. Host negotiation, model trace validation and
-native qualification remain separate gates. No CPU saving is claimed.
+r13 connection only with a direct CPU ring renderer. The CLI defaults to r10;
+`lom --serve --renderer cpu --image-source owned-ring --frame-protocol sft`
+explicitly requests exactly r13 with the SFT capability. This requires the
+feature build and an owner that separately permits SFT. GPU, DMA-BUF and unknown
+protocol selections refuse; there is no automatic negotiation fallback.
+Real producer-to-host integration, model trace validation and native
+qualification remain separate gates. No CPU saving is claimed.
 
 The pinned Rust SDK is `b483e1ee9d79730705d372ffcebd47c7b12c4514`;
 its paired C initial-image API is published at `0df720b0b1af7dd793f55b2bceac867bc1261b6b`.
@@ -43,3 +47,9 @@ region path, a full-panel worker at heights 24/512, explicit unadmitted refusal,
 independent releases and input ordering. Removing the source-release guard or
 skipping the new Presented target installation makes the corresponding test
 fail; the guards were restored before the final gate.
+
+The CLI opt-in reuses the same authenticated connection, renderer and service;
+it changes only the requested revision/capability and CPU-only admission.
+CLI controls cover unsupported builds and invalid values; entry controls cover
+CPU admission and GPU/DMA refusals before connecting. Evidence:
+`~/.local/state/sophia-lom-frame-cli-01`.

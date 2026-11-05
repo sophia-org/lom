@@ -23,7 +23,7 @@ use std::{
 };
 
 /// Help displayed without loading configuration, fonts or a GPU.
-pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n       lom content-proof --socket FILE\n       lom --serve [--image-source owned-ring|dma-buf] [--renderer gpu|cpu]\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\ncontent-proof exercises fixed diagnostic pixels over an explicitly admitted Sophia 9P socket; it does not present a panel.\n--serve is the persistent protected Sophia content-shell entry point. The panel's renderer setting, or an overriding --renderer, selects gpu (default) or cpu; cpu renders with Vello CPU into owned-ring slots without a GPU grant and is never a fallback.\n";
+pub const HELP: &str = "Lom — native Sophia shell components\n\nUsage: lom [--help | --version]\n       lom check-config --config FILE --theme FILE\n       lom preview --config FILE --theme FILE --fixture FILE --output NEW_DIRECTORY [--width 1280] [--scale 1]\n       lom content-proof --socket FILE\n       lom --serve [--image-source owned-ring|dma-buf] [--renderer gpu|cpu] [--frame-protocol legacy|sft]\n\npreview explicitly initializes a Vulkan GPU and writes panel/calendar PNGs.\ncontent-proof exercises fixed diagnostic pixels over an explicitly admitted Sophia 9P socket; it does not present a panel.\n--serve is the persistent protected Sophia content-shell entry point. The panel's renderer setting, or an overriding --renderer, selects gpu (default) or cpu; cpu renders with Vello CPU into owned-ring slots without a GPU grant and is never a fallback.\n--frame-protocol sft requires the experimental-frame-transactions build feature and an explicitly permitted r13 owner; CPU owned-ring only. The default is legacy r10.\n";
 
 /// Run one diagnostic command; the caller prints any returned boundary failure.
 pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
@@ -41,7 +41,7 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
     let allowed = match command {
         "check-config" => &["--config", "--theme"][..],
         "content-proof" => &["--socket"][..],
-        "--serve" => &["--image-source", "--renderer"][..],
+        "--serve" => &["--image-source", "--renderer", "--frame-protocol"][..],
         "preview" => &[
             "--config",
             "--theme",
@@ -69,7 +69,18 @@ pub fn run(arguments: Vec<OsString>) -> Result<(), String> {
             Some(value) if value == "cpu" => Some(Renderer::Cpu),
             _ => return Err("--renderer must be gpu or cpu".into()),
         };
-        return serve::run(serve::Entry::Ordinary, dma, renderer);
+        let entry = match options.get("--frame-protocol") {
+            None => serve::Entry::Ordinary,
+            Some(value) if value == "legacy" => serve::Entry::Ordinary,
+            #[cfg(feature = "experimental-frame-transactions")]
+            Some(value) if value == "sft" => serve::Entry::FrameTransactions,
+            #[cfg(not(feature = "experimental-frame-transactions"))]
+            Some(value) if value == "sft" => {
+                return Err("SFT requires a build with experimental-frame-transactions".into());
+            }
+            _ => return Err("--frame-protocol must be legacy or sft".into()),
+        };
+        return serve::run(entry, dma, renderer);
     }
     let (config, theme) = load(
         &required(&options, "--config")?,
