@@ -58,13 +58,13 @@ tokio = { version = "1.50", features = ["rt", "sync"] }
 wgpu = { version = "28.0", default-features = false, features = ["vulkan", "wgsl", "std", "parking_lot"] }
 imaging_vello_cpu = "0.0.1"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
-# Published SDK revision 99b05e34 (owned ring fills 5d895652 plus parity docs)
-# on the cpu/owned-fill branch of sophia-desktop-sdk-rs; not merged to master.
-sophia-shell-protocol = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "99b05e345be34678128733bf0166ded85b06239a" }
-sophia-shell-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "99b05e345be34678128733bf0166ded85b06239a" }
-sophia-launch-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "99b05e345be34678128733bf0166ded85b06239a" }
-sophia-9p-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "99b05e345be34678128733bf0166ded85b06239a" }
-sophia-image-producer = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "99b05e345be34678128733bf0166ded85b06239a" }
+# Published default-off SFT SDK: worker fills and exact drain-before-fallback.
+# Existing r10 negotiation remains the default.
+sophia-shell-protocol = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "452887f8afd1d529c25b35b187d9586e9a31d738" }
+sophia-shell-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "452887f8afd1d529c25b35b187d9586e9a31d738" }
+sophia-launch-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "452887f8afd1d529c25b35b187d9586e9a31d738" }
+sophia-9p-client = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "452887f8afd1d529c25b35b187d9586e9a31d738" }
+sophia-image-producer = { git = "https://github.com/sophia-org/sophia-desktop-sdk-rs", rev = "452887f8afd1d529c25b35b187d9586e9a31d738" }
 
 [dev-dependencies]
 masonry_testing = { git = "https://github.com/linebender/xilem", rev = "b81d8d7a631849def6eeab282561439b963862e5", default-features = false }
