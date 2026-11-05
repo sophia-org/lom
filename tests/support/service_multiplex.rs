@@ -24,6 +24,10 @@ pub(super) fn exchange(stream: &mut Peer) {
                 }
                 Message::Content(transaction, record) => break (transaction, *record),
                 Message::Activation(..) => panic!("unexpected multiplexed activation"),
+                #[cfg(feature = "experimental-frame-transactions")]
+                Message::Frame(record) => panic!("SFT record on r10 fixture: {record:?}"),
+                #[cfg(feature = "experimental-frame-transactions")]
+                Message::RefusedImage(offer) => panic!("SFT refusal on r10 fixture: {offer:?}"),
             }
         };
         match record {

@@ -157,6 +157,10 @@ fn present_fills(
             }
             Message::Content(transaction, record) => (transaction, *record),
             Message::Activation(..) => panic!("unexpected activation"),
+            #[cfg(feature = "experimental-frame-transactions")]
+            Message::Frame(record) => panic!("SFT record on r10 fixture: {record:?}"),
+            #[cfg(feature = "experimental-frame-transactions")]
+            Message::RefusedImage(offer) => panic!("SFT refusal on r10 fixture: {offer:?}"),
         };
         match record {
             ShellContentRecord::FrameDemand(demand) => send_tx(

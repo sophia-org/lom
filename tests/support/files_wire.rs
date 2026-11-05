@@ -26,6 +26,7 @@ struct Object {
 }
 
 pub struct Wire {
+    pub revision: u16,
     stream: UnixStream,
     input: Vec<u8>,
     fids: HashMap<u32, String>,
@@ -49,6 +50,7 @@ pub struct Wire {
 impl Wire {
     pub fn new(stream: UnixStream) -> Self {
         Self {
+            revision: 10,
             stream,
             input: Vec::new(),
             fids: HashMap::new(),
@@ -86,7 +88,7 @@ impl Wire {
     pub fn event(&mut self, kind: ShellFileKind, body: &[u8]) {
         self.sequence += 1;
         self.events.extend(
-            encode_shell_file_record(
+            encode_shell_file_record_at_revision(
                 ShellFileHeader {
                     kind,
                     connection_epoch: EPOCH,
@@ -94,6 +96,7 @@ impl Wire {
                     sequence: self.sequence,
                 },
                 body,
+                self.revision,
             )
             .unwrap(),
         );
@@ -112,7 +115,7 @@ impl Wire {
                     sequence: self.sequence,
                 },
                 body,
-                10,
+                self.revision,
             )
             .unwrap(),
         );
@@ -135,7 +138,7 @@ impl Wire {
                 submission_id: submission.id,
                 candidate_kind: kind,
             },
-            10,
+            self.revision,
         )
         .unwrap();
         self.event(ShellFileKind::Submitted, &body);
@@ -289,7 +292,7 @@ impl Wire {
                         let header = decode_shell_file_record_at_revision(
                             &self.transaction,
                             ShellFileClass::Candidate,
-                            10,
+                            self.revision,
                         )
                         .unwrap()
                         .header;

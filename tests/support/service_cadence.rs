@@ -128,6 +128,10 @@ fn present(
             }
             Message::Content(transaction, record) => (transaction, *record),
             Message::Activation(..) => panic!("unexpected activation"),
+            #[cfg(feature = "experimental-frame-transactions")]
+            Message::Frame(..) | Message::RefusedImage(..) => {
+                panic!("frame transaction on the r10 fixture")
+            }
         };
         match record {
             ShellContentRecord::AllocationRequest(request) => {

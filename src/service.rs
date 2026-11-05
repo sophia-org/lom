@@ -4,9 +4,11 @@
 mod cadence;
 mod custody;
 mod image;
+mod observations;
 mod presentation;
 mod regions;
 mod ring_fill;
+mod scene;
 mod scheduler;
 #[cfg(feature = "diagnostic-cpu-reference")]
 pub(crate) mod sequence;
@@ -182,6 +184,8 @@ pub trait ContentRenderer {
 }
 
 struct Panel {
+    #[cfg(feature = "experimental-frame-transactions")]
+    frame: presentation::FrameOutput,
     target_generations: target_generations::TargetGenerations,
     output: ContentOutputFactsEntry,
     allocation: ContentAllocationResult,
@@ -304,6 +308,13 @@ impl<R: ContentRenderer> ShellService<R> {
         endpoint_dir: PathBuf,
     ) -> Result<Self, String> {
         let (stop, stop_wake) = stop;
+        if connection.welcome().selected_revision == 13
+            && (!cfg!(feature = "experimental-frame-transactions")
+                || !renderer.uses_ring_fill()
+                || renderer.uses_dma_buf())
+        {
+            return Err("SFT requires the experimental direct CPU ring producer".into());
+        }
         let (_, ShellContentRecord::Limits(limits)) =
             receive_content(&mut connection, &stop, stop_wake.as_ref(), &mut renderer)?
         else {
@@ -328,7 +339,11 @@ impl<R: ContentRenderer> ShellService<R> {
                 transfer_timeout_ms: limits.transfer_timeout_ms,
                 startup_deadline_ms: origin_ms + u64::from(limits.transfer_timeout_ms),
                 formats_capacity: 4096,
-                ring_slots: 0,
+                ring_slots: if connection.welcome().selected_revision == 13 {
+                    2
+                } else {
+                    0
+                },
                 ring_capacity: 0,
                 content_grant_epoch: limits.grant.content_grant_epoch,
             };
@@ -394,6 +409,12 @@ impl<R: ContentRenderer> ShellService<R> {
             sequence: None,
         };
         service.allocate_panels(allowance)?;
+        if service.connection.welcome().selected_revision == 13 {
+            service
+                .connection
+                .set_automatic_event_delivery(false)
+                .map_err(|e| format!("ordered SFT journal: {e}"))?;
+        }
         Ok(service)
     }
 
@@ -492,6 +513,8 @@ impl<R: ContentRenderer> ShellService<R> {
                 model.epoch = snapshot.connection_epoch;
             }
             self.panels.push(Panel {
+                #[cfg(feature = "experimental-frame-transactions")]
+                frame: Default::default(),
                 target_generations: Default::default(),
                 output,
                 allocation,
@@ -509,107 +532,6 @@ impl<R: ContentRenderer> ShellService<R> {
                     release_deadline: None,
                 }; RESOURCE_SLOTS],
             });
-        }
-        Ok(())
-    }
-
-    fn observe(&mut self) -> Result<(), String> {
-        self.custody.observe(&self.connection)?;
-        self.connection
-            .poll_io()
-            .map_err(|error| format!("shell I/O: {error}"))?;
-        self.custody.observe(&self.connection)?;
-        for _ in 0..MAX_OBSERVATIONS_PER_TURN {
-            let Some((_, snapshot)) = self
-                .connection
-                .take_indicators()
-                .map_err(|error| format!("indicator receive failed: {error}"))?
-            else {
-                break;
-            };
-            if snapshot.connection_epoch != self.connection.connection_epoch() {
-                return Err("indicator snapshot belongs to a different connection".into());
-            }
-            self.latest_indicators = Some(snapshot.clone());
-            if !self.live_model_inputs() {
-                continue;
-            }
-            let workspaces = workspace_snapshot(&snapshot);
-            for panel in &mut self.panels {
-                let mut next = panel.model.clone();
-                next.workspaces = workspaces.clone();
-                next.epoch = workspaces.epoch;
-                panel.dirty |= !crate::modules::same_panel_pixels(&panel.model, &next);
-                panel.interaction_dirty |= panel.model.workspaces != next.workspaces;
-                panel.model = next;
-            }
-        }
-        for _ in 0..MAX_OBSERVATIONS_PER_TURN {
-            let Some((_, outcome)) = self
-                .connection
-                .take_indicator_activation_outcome()
-                .map_err(|error| format!("indicator outcome receive failed: {error}"))?
-            else {
-                break;
-            };
-            self.lifecycle.finish_action(outcome.event_id);
-            if !self.pending_activation_events.remove(&outcome.event_id) {
-                continue;
-            }
-            if outcome.status != ShellIndicatorActivationStatus::Accepted {
-                eprintln!(
-                    "lom_workspace_activation schema=1 status=rejected event_id={} reason={}",
-                    outcome.event_id, outcome.reason
-                );
-            }
-        }
-        for _ in 0..MAX_OBSERVATIONS_PER_TURN {
-            let Some((transaction, record)) = self
-                .connection
-                .take_content()
-                .map_err(|error| format!("shell content receive failed: {error}"))?
-            else {
-                break;
-            };
-            let dispatch = self
-                .lifecycle
-                .dispatch(transaction, record)
-                .map_err(|error| format!("ordered content lifecycle: {error:?}"))?;
-            let record = dispatch.record;
-            if let ShellContentRecord::Action(action) = record {
-                if !self.live_model_inputs() {
-                    return Err("fixture sequence refuses content input".into());
-                }
-                if dispatch.action != Some(ContentActionDispatch::Cancelled) {
-                    self.handle_content_action(
-                        action,
-                        dispatch.action == Some(ContentActionDispatch::Eligible),
-                    )?;
-                }
-                continue;
-            }
-            if let ShellContentRecord::ResourceReleased(released) = &record {
-                self.release_resource(released)?;
-                continue;
-            }
-            if let ShellContentRecord::CandidateOutcome(outcome) = &record
-                && outcome.kind == CANDIDATE_PRESENTED
-            {
-                self.install_presented_targets(outcome)?;
-            }
-            if let ShellContentRecord::OutputFacts(facts) = &record {
-                if facts != &self.facts {
-                    return Err(
-                        "content output facts changed; restart required for fresh allocations"
-                            .into(),
-                    );
-                }
-                continue;
-            }
-            if self.pending_content.len() == MAX_PENDING_CONTENT {
-                return Err("shell content response queue saturated".into());
-            }
-            self.pending_content.push_back((transaction, record));
         }
         Ok(())
     }

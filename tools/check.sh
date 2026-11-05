@@ -20,3 +20,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 # The default-off diagnostic CPU copy reference: its binary, renderer and tests.
 cargo test --workspace --all-targets --locked --features lom/diagnostic-cpu-reference
 cargo clippy --workspace --all-targets --locked --features lom/diagnostic-cpu-reference -- -D warnings
+# Default-off SFT uses the real CPU owner and ordered file journal.
+cargo test --workspace --all-targets --locked --features lom/experimental-frame-transactions
+cargo test --lib --locked --all-features
+cargo clippy --workspace --all-targets --locked --all-features -- -D warnings

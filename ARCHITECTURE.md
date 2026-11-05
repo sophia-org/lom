@@ -40,6 +40,10 @@ meets its launch and resource-accounting gates.
 
 ## 1. Ownership boundaries
 
+The default-off [SFT producer](docs/native-frame-transactions.md) preserves
+these owners and the retained CPU region plan. It changes whole-frame admission
+on an explicitly supplied r13 connection; the normal CLI still selects r10.
+
 | Owner | Responsibilities |
 | --- | --- |
 | Lom application model | Module values, desired panel composition, selection, popout intent, configuration, and reduced lifecycle observations |

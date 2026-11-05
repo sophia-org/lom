@@ -1,4 +1,7 @@
 use super::*;
+#[cfg(feature = "experimental-frame-transactions")]
+#[path = "service_frames.rs"]
+mod frames;
 #[cfg(feature = "diagnostic-cpu-reference")]
 #[path = "service_sequence.rs"]
 mod sequence;

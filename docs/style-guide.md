@@ -120,6 +120,13 @@ ring bytes across updates and delayed releases. A test-only owner clock fixes
 the observation sequence without exposing a production clock or inspection API.
 These controls prove client custody and pixels, not native composition.
 
+With `experimental-frame-transactions`, `service_frames.rs` reuses that peer
+and production CPU worker for r13 establishment, copied and retained frames,
+close/drain fallback, explicit refusal, delayed source/resource release and
+input ordering around Presented. The script composes accepted pixels itself;
+it is not the Sophia host. The shared r10 peer's SFT command helpers carry
+targeted dead-code allowances because only the in-crate r13 suite calls them.
+
 With the diagnostic feature, `service_sequence.rs` exercises fixed fixture
 phases through that peer, including live-feed isolation and refused input.
 The test-only re-export of its peer constructor lets `region_entry.rs` run the

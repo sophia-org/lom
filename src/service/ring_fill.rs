@@ -20,6 +20,39 @@ pub(super) struct FillTarget {
 }
 
 impl<R: ContentRenderer> ShellService<R> {
+    pub(super) fn offer_completed_fill(
+        &mut self,
+        index: usize,
+        upload: RingUpload,
+        fill: &mut OwnedRingSlotFill,
+    ) -> Result<u64, sophia_shell_client::ShellClientError> {
+        #[cfg(feature = "experimental-frame-transactions")]
+        if self.frame_mode() {
+            let key = self.frame_key(index, self.next_transaction);
+            let frame = &self.panels[index].frame;
+            return if frame.stream.key().is_none() {
+                frame.stream.commit_initial_ring_fill(
+                    &mut self.connection,
+                    key,
+                    fill,
+                    upload,
+                    Instant::now(),
+                )
+            } else {
+                frame.stream.commit_legacy_ring_fill(
+                    &mut self.connection,
+                    fill,
+                    upload,
+                    Instant::now(),
+                )
+            };
+        }
+        let _ = index;
+        self.connection
+            .image_commit_ring_fill(fill, upload, Instant::now())
+            .map_err(sophia_shell_client::ShellClientError::Image)
+    }
+
     /// Acquire one exact payload and queue the sole render job into it.
     /// Ok(false) means the ring or its single loan is not yet available; the
     /// panel stays dirty and nothing is spent.

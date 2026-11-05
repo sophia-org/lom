@@ -15,7 +15,7 @@ pub(super) struct CustodyWatch {
 }
 
 impl CustodyWatch {
-    fn reserve(&self, maximum: usize) -> Result<(), ShellClientError> {
+    pub(super) fn reserve(&self, maximum: usize) -> Result<(), ShellClientError> {
         if self
             .pending
             .front()
@@ -26,7 +26,7 @@ impl CustodyWatch {
         Ok(())
     }
 
-    fn record(&mut self, admission: Admission) {
+    pub(super) fn record(&mut self, admission: Admission) {
         for ticket in admission.tickets() {
             self.last = ticket.0;
             self.pending.push_back(ticket);

@@ -11,6 +11,10 @@ use std::{
 };
 
 pub enum Message {
+    #[cfg(feature = "experimental-frame-transactions")]
+    RefusedImage(RingOffer),
+    #[cfg(feature = "experimental-frame-transactions")]
+    Frame(Box<ShellFrameRecord>),
     Content(TransactionId, Box<ShellContentRecord>),
     Activation(TransactionId, ShellIndicatorActivation),
     /// One ring offer verified by the peer, with the slot bytes it read.
@@ -18,6 +22,13 @@ pub enum Message {
 }
 
 enum Command {
+    // This shared peer is also compiled by the r10-only integration suite.
+    #[allow(dead_code)]
+    #[cfg(feature = "experimental-frame-transactions")]
+    RefuseNextFrame,
+    #[allow(dead_code)]
+    #[cfg(feature = "experimental-frame-transactions")]
+    Frame(ShellFrameRecord),
     Content(TransactionId, ShellContentRecord),
     Indicators(TransactionId, ShellIndicatorSnapshot),
     Activation(TransactionId, ShellIndicatorActivationOutcome),
@@ -34,6 +45,17 @@ pub struct Peer {
 }
 
 impl Peer {
+    // SFT scenarios live in the in-crate region suite; r10 integration reuses this peer.
+    #[allow(dead_code)]
+    #[cfg(feature = "experimental-frame-transactions")]
+    pub fn refuse_next_frame(&self) {
+        self.command.send(Command::RefuseNextFrame).unwrap();
+    }
+    #[allow(dead_code)]
+    #[cfg(feature = "experimental-frame-transactions")]
+    pub fn frame(&self, record: ShellFrameRecord) {
+        self.command.send(Command::Frame(record)).unwrap();
+    }
     pub fn new(stream: UnixStream, capabilities: u64) -> Self {
         Self::with_refusal(stream, capabilities, None)
     }
@@ -146,6 +168,16 @@ fn run(
     messages: mpsc::Sender<Message>,
 ) {
     let mut wire = Wire::new(stream);
+    let revision = if capabilities & SHELL_FRAME_CAPABILITY != 0 {
+        13
+    } else {
+        10
+    };
+    wire.revision = revision;
+    #[cfg(feature = "experimental-frame-transactions")]
+    let mut frame_submissions = Vec::new();
+    #[cfg(feature = "experimental-frame-transactions")]
+    let mut refuse_next_frame = false;
     let limits = ContentLimits::prototype(super::GRANT);
     wire.object(
         "limits",
@@ -184,6 +216,24 @@ fn run(
         assert!(Instant::now() < deadline, "scripted file peer deadline");
         while negotiated && let Ok(command) = commands.try_recv() {
             match command {
+                #[cfg(feature = "experimental-frame-transactions")]
+                Command::RefuseNextFrame => refuse_next_frame = true,
+                #[cfg(feature = "experimental-frame-transactions")]
+                Command::Frame(record) => {
+                    let sequence = wire.next_sequence();
+                    let bytes = encode_shell_frame_record(
+                        ShellFileHeader {
+                            kind: record.kind(),
+                            connection_epoch: EPOCH,
+                            submission_id: 0,
+                            sequence,
+                        },
+                        &record,
+                        13,
+                    )
+                    .unwrap();
+                    wire.event_raw(&bytes);
+                }
                 Command::Stop => return,
                 Command::Barrier(done) => done.send(()).unwrap(),
                 Command::HoldSlotReleases(true) => {
@@ -227,15 +277,65 @@ fn run(
         }
         while let Some(submission) = wire.submissions.pop_front() {
             let bytes = &submission.bytes;
-            let kind = decode_shell_file_record_at_revision(bytes, ShellFileClass::Candidate, 10)
-                .unwrap()
-                .header
-                .kind;
+            let kind =
+                decode_shell_file_record_at_revision(bytes, ShellFileClass::Candidate, revision)
+                    .unwrap()
+                    .header
+                    .kind;
             if Some(kind) == refuse {
                 wire.refuse(&submission);
                 continue;
             }
             wire.accept(&submission, kind);
+            #[cfg(feature = "experimental-frame-transactions")]
+            if matches!(
+                kind,
+                ShellFileKind::FrameStreamOpen
+                    | ShellFileKind::FrameStreamClose
+                    | ShellFileKind::FrameCommit
+            ) {
+                let record =
+                    decode_shell_frame_record(bytes, ShellFileClass::Candidate, 13, 8192).unwrap();
+                if let ShellFrameRecord::Commit(frame) = &record
+                    && refuse_next_frame
+                {
+                    refuse_next_frame = false;
+                    if let Some(offer) = frame.image {
+                        messages.send(Message::RefusedImage(offer)).unwrap();
+                    }
+                    let refusal = ShellFrameRecord::Refused {
+                        transaction: frame.transaction,
+                        grant: frame.candidate.grant,
+                        output: frame.candidate.output,
+                        stream_id: frame.candidate.pacing_permit,
+                        candidate_generation: frame.candidate.candidate_generation,
+                        request_kind: ShellFileKind::FrameCommit,
+                        reason: ContentReason::Budget as u16,
+                    };
+                    let sequence = wire.next_sequence();
+                    wire.event_raw(
+                        &encode_shell_frame_record(
+                            ShellFileHeader {
+                                kind: refusal.kind(),
+                                connection_epoch: EPOCH,
+                                submission_id: 0,
+                                sequence,
+                            },
+                            &refusal,
+                            13,
+                        )
+                        .unwrap(),
+                    );
+                    continue;
+                }
+                if let ShellFrameRecord::Commit(frame) = &record
+                    && let Some(offer) = frame.image
+                {
+                    wire.ring_writes.push_back(offer.encode());
+                }
+                frame_submissions.push(record);
+                continue;
+            }
             let value = match kind {
                 ShellFileKind::Negotiate => {
                     let hello = decode_shell_file_negotiate(bytes).unwrap();
@@ -245,11 +345,11 @@ fn run(
                             hello.maximum_revision,
                             hello.required_capabilities
                         ),
-                        (10, 10, capabilities)
+                        (revision, revision, capabilities)
                     );
                     let body = encode_shell_file_negotiated_body(ShellFileNegotiated {
                         welcome: ShellV1ServerWelcome {
-                            selected_revision: 10,
+                            selected_revision: revision,
                             connection_epoch: EPOCH,
                             capabilities,
                             max_descriptors: 16,
@@ -469,6 +569,10 @@ fn run(
                     }
                 }
             }
+        }
+        #[cfg(feature = "experimental-frame-transactions")]
+        for record in frame_submissions.drain(..) {
+            messages.send(Message::Frame(Box::new(record))).unwrap();
         }
         std::thread::sleep(Duration::from_micros(100));
     }

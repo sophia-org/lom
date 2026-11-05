@@ -31,6 +31,7 @@ static NEXT: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct Worker {
     real: RendererWorker,
+    pub(in crate::service) regions: bool,
     partial: bool,
     pub(in crate::service) partial_completions: usize,
     pub(in crate::service) fault_at: Option<usize>,
@@ -51,7 +52,7 @@ impl ContentRenderer for Worker {
         true
     }
     fn supports_regions(&self) -> bool {
-        true
+        self.regions
     }
     fn submit_fill(
         &mut self,
@@ -99,6 +100,8 @@ impl ContentRenderer for Worker {
 
 #[derive(Debug)]
 pub(in crate::service) struct Frame {
+    #[cfg(feature = "experimental-frame-transactions")]
+    pub(in crate::service) stream: bool,
     pub(in crate::service) generation: u64,
     pub(in crate::service) pixels: Vec<u8>,
     pub(in crate::service) resources: Vec<(u64, u64)>,
@@ -107,6 +110,10 @@ pub(in crate::service) struct Frame {
 }
 
 pub(in crate::service) enum Control {
+    #[cfg(feature = "experimental-frame-transactions")]
+    FrameAction(bool),
+    #[cfg(feature = "experimental-frame-transactions")]
+    RefuseNextFrame,
     HoldSlots(bool),
     HoldResources(bool),
     Barrier(mpsc::Sender<()>),
@@ -118,6 +125,8 @@ pub(in crate::service) enum Control {
 }
 
 pub(in crate::service) struct Session {
+    #[cfg(feature = "experimental-frame-transactions")]
+    pub(in crate::service) action_acks: mpsc::Receiver<ContentActionAck>,
     pub(in crate::service) service: ShellService<Worker>,
     pub(in crate::service) commands: mpsc::Sender<Control>,
     frames: mpsc::Receiver<Frame>,
@@ -133,12 +142,19 @@ fn server(
     height: u32,
     controls: mpsc::Receiver<Control>,
     frames: mpsc::Sender<Frame>,
+    revision: u16,
+    action_acks: mpsc::Sender<ContentActionAck>,
 ) {
     let caps = SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
         | SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
         | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
         | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
-        | IMAGE_CAPABILITY_OWNED_RING;
+        | IMAGE_CAPABILITY_OWNED_RING
+        | if revision == 13 {
+            shell_files::SHELL_FRAME_CAPABILITY
+        } else {
+            0
+        };
     let peer = Peer::new(listener.accept().unwrap().0, caps);
     peer.content(
         TransactionId::from_raw(2),
@@ -198,9 +214,16 @@ fn server(
     let mut begin = None;
     let mut placements = Vec::new();
     let mut uploaded = (0, 0);
+    #[cfg(feature = "experimental-frame-transactions")]
+    let mut stream = super::frames::Script::default();
+    let mut parts = std::collections::VecDeque::new();
     loop {
         for control in controls.try_iter() {
             match control {
+                #[cfg(feature = "experimental-frame-transactions")]
+                Control::FrameAction(before) => stream.action_before = Some(before),
+                #[cfg(feature = "experimental-frame-transactions")]
+                Control::RefuseNextFrame => peer.refuse_next_frame(),
                 Control::Stop => return,
                 Control::Barrier(done) => {
                     peer.synchronize();
@@ -248,21 +271,30 @@ fn server(
                 }
             }
         }
-        let Some(message) = peer.try_receive(Duration::from_millis(1)) else {
+        let message = if let Some((tx, record)) = parts.pop_front() {
+            Message::Content(tx, Box::new(record))
+        } else if let Some(message) = peer.try_receive(Duration::from_millis(1)) {
+            message
+        } else {
             continue;
         };
         let (tx, record) = match message {
+            #[cfg(feature = "experimental-frame-transactions")]
+            Message::RefusedImage(offer) => {
+                let key = (offer.resource, offer.resource_generation);
+                assert!(!accepted.contains_key(&key));
+                record_identity(key, &mut high_water, &mut greatest);
+                continue;
+            }
+            #[cfg(feature = "experimental-frame-transactions")]
+            Message::Frame(record) => {
+                stream.receive(&peer, *record, &mut parts);
+                continue;
+            }
             Message::Image(metadata, pixels) => {
                 let key = (metadata.resource, metadata.resource_generation);
                 assert!(!accepted.contains_key(&key));
-                if let Some(previous) = high_water.insert(key.0, key.1) {
-                    assert_eq!(key.1, previous + 1);
-                } else {
-                    assert!(key.0 > greatest);
-                    assert_eq!(key.1, 1);
-                    greatest = key.0;
-                }
-                assert!(greatest <= RESOURCE_SLOTS as u64, "identity leak");
+                record_identity(key, &mut high_water, &mut greatest);
                 uploaded.0 += 1;
                 uploaded.1 += pixels.len();
                 accepted.insert(key, (metadata.width, metadata.height, pixels));
@@ -270,9 +302,22 @@ fn server(
                 continue;
             }
             Message::Content(tx, record) => (tx, *record),
-            Message::Activation(..) => panic!("unexpected activation"),
+            Message::Activation(tx, activation) => {
+                peer.activation(
+                    tx,
+                    ShellIndicatorActivationOutcome {
+                        connection_epoch: GRANT.connection_epoch,
+                        snapshot_generation: activation.snapshot_generation,
+                        event_id: activation.event_id,
+                        status: ShellIndicatorActivationStatus::Accepted,
+                        reason: 0,
+                    },
+                );
+                continue;
+            }
         };
         match record {
+            ShellContentRecord::ActionAck(ack) => action_acks.send(ack).unwrap(),
             ShellContentRecord::FrameDemand(demand) => peer.content(
                 tx,
                 ShellContentRecord::FramePermit(ContentFramePermit {
@@ -327,6 +372,8 @@ fn server(
                 );
                 frames
                     .send(Frame {
+                        #[cfg(feature = "experimental-frame-transactions")]
+                        stream: stream.pending(),
                         generation: begin.candidate_generation,
                         pixels,
                         resources: current.clone(),
@@ -335,19 +382,21 @@ fn server(
                     })
                     .unwrap();
                 uploaded = (0, 0);
-                peer.content(
-                    tx,
-                    ShellContentRecord::CandidateOutcome(ContentCandidateOutcome {
-                        grant: GRANT,
-                        candidate_generation: begin.candidate_generation,
-                        output: OUTPUT,
-                        kind: 2,
-                        reason: 0,
-                        presentation_epoch: begin.candidate_generation + 30,
-                        work_area_generation: begin.candidate_generation + 8,
-                        wm_commit_generation: begin.candidate_generation + 9,
-                    }),
-                );
+                let outcome = ContentCandidateOutcome {
+                    grant: GRANT,
+                    candidate_generation: begin.candidate_generation,
+                    output: OUTPUT,
+                    kind: 2,
+                    reason: 0,
+                    presentation_epoch: begin.candidate_generation + 30,
+                    work_area_generation: begin.candidate_generation + 8,
+                    wm_commit_generation: begin.candidate_generation + 9,
+                };
+                #[cfg(feature = "experimental-frame-transactions")]
+                if stream.present(&peer, tx, outcome.clone(), &mut parts) {
+                    continue;
+                }
+                peer.content(tx, ShellContentRecord::CandidateOutcome(outcome));
             }
             ShellContentRecord::ResourceRetire(row) => {
                 let key = (row.resource.id, row.resource.generation);
@@ -381,6 +430,17 @@ fn server(
     }
 }
 
+fn record_identity(key: (u64, u64), high_water: &mut BTreeMap<u64, u64>, greatest: &mut u64) {
+    if let Some(previous) = high_water.insert(key.0, key.1) {
+        assert_eq!(key.1, previous + 1);
+    } else {
+        assert!(key.0 > *greatest);
+        assert_eq!(key.1, 1);
+        *greatest = key.0;
+    }
+    assert!(*greatest <= RESOURCE_SLOTS as u64, "identity leak");
+}
+
 impl Session {
     pub(in crate::service) fn control(&self, command: Control) {
         let (send, receive) = mpsc::channel();
@@ -403,6 +463,27 @@ impl Session {
     }
 
     fn with_renderer(width: u32, height: u32, position: Position, real: RendererWorker) -> Self {
+        Self::with_revision(width, height, position, real, 10)
+    }
+
+    #[cfg(feature = "experimental-frame-transactions")]
+    pub(in crate::service) fn sft(height: u32) -> Self {
+        Self::with_revision(
+            1920,
+            height,
+            Position::Top,
+            RendererWorker::start_cpu().unwrap(),
+            13,
+        )
+    }
+
+    fn with_revision(
+        width: u32,
+        height: u32,
+        position: Position,
+        real: RendererWorker,
+        revision: u16,
+    ) -> Self {
         let path = std::env::temp_dir().join(format!(
             "lom-regions-{}-{}.sock",
             std::process::id(),
@@ -411,17 +492,25 @@ impl Session {
         let listener = UnixListener::bind(&path).unwrap();
         let (commands, controls) = mpsc::channel();
         let (send, frames) = mpsc::channel();
-        let server = std::thread::spawn(move || server(listener, width, height, controls, send));
+        let (ack_send, _action_acks) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            server(listener, width, height, controls, send, revision, ack_send)
+        });
         let caps = SOPHIA_SHELL_CAPABILITY_CONTENT_SURFACE
             | SOPHIA_SHELL_CAPABILITY_DESCRIPTOR_SWITCHER
             | SOPHIA_SHELL_CAPABILITY_VIEW_INDICATORS
             | SOPHIA_SHELL_CAPABILITY_CONTENT_DISCRETE_INPUT
-            | IMAGE_CAPABILITY_OWNED_RING;
+            | IMAGE_CAPABILITY_OWNED_RING
+            | if revision == 13 {
+                shell_files::SHELL_FRAME_CAPABILITY
+            } else {
+                0
+            };
         let connection = ShellConnection::connect_files(
             &path,
             ShellClientOptions {
-                minimum_revision: 10,
-                maximum_revision: 10,
+                minimum_revision: revision,
+                maximum_revision: revision,
                 required_capabilities: caps,
                 handshake_timeout: Duration::from_secs(2),
             },
@@ -440,6 +529,7 @@ impl Session {
         let (config, theme) = parse_shell_config(&source).unwrap();
         let renderer = Worker {
             real,
+            regions: true,
             partial: false,
             partial_completions: 0,
             fault_at: None,
@@ -476,6 +566,8 @@ impl Session {
                 .collect(),
         };
         Self {
+            #[cfg(feature = "experimental-frame-transactions")]
+            action_acks: _action_acks,
             service,
             commands,
             frames,

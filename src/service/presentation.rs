@@ -1,5 +1,10 @@
 use super::*;
 
+#[cfg(feature = "experimental-frame-transactions")]
+mod frames;
+#[cfg(feature = "experimental-frame-transactions")]
+pub(super) use frames::FrameOutput;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PresentationPhase {
     AwaitRender,
@@ -14,6 +19,8 @@ enum PresentationPhase {
 }
 
 pub(super) struct PendingPresentation {
+    #[cfg(feature = "experimental-frame-transactions")]
+    frame: Option<frames::PendingFrame>,
     pub(super) panel: usize,
     slot_index: usize,
     resource: ContentResourceId,
@@ -89,6 +96,8 @@ impl<R: ContentRenderer> ShellService<R> {
             let timing = self.cadence_job();
             let allocation = &self.panels[panel].allocation;
             PendingPresentation {
+                #[cfg(feature = "experimental-frame-transactions")]
+                frame: None,
                 panel,
                 slot_index: job.slot,
                 resource: ContentResourceId {
@@ -224,6 +233,8 @@ impl<R: ContentRenderer> ShellService<R> {
             return Err("interaction refresh lost resident pixels".into());
         }
         self.presentations.push(PendingPresentation {
+            #[cfg(feature = "experimental-frame-transactions")]
+            frame: None,
             panel: index,
             slot_index,
             resource: ContentResourceId {
@@ -303,6 +314,15 @@ impl<R: ContentRenderer> ShellService<R> {
         if Instant::now() >= pending.deadline {
             return Err(format!("content {:?} response timed out", pending.phase));
         }
+        #[cfg(feature = "experimental-frame-transactions")]
+        if pending.frame.is_some()
+            && matches!(
+                pending.phase,
+                PresentationPhase::CandidateSubmitted | PresentationPhase::RetireNeeded
+            )
+        {
+            return self.advance_frame_progress(pending);
+        }
         match pending.phase {
             PresentationPhase::AwaitRender => Ok(false),
             PresentationPhase::ResourceUnqueued => self.advance_resource_start(pending),
@@ -320,6 +340,10 @@ impl<R: ContentRenderer> ShellService<R> {
         &mut self,
         pending: &mut PendingPresentation,
     ) -> Result<bool, String> {
+        #[cfg(feature = "experimental-frame-transactions")]
+        if let Some(progressed) = self.frame_before_upload(pending)? {
+            return Ok(progressed);
+        }
         // Neither transport may send a source before ChannelReady.
         let Some(adapter) = self.connection.image_adapter() else {
             return Err("image channel was not enabled".into());
@@ -367,10 +391,10 @@ impl<R: ContentRenderer> ShellService<R> {
             .ok_or("upload lost its raster")?
             .pixels;
         let offered = match pixels {
-            RenderImage::Cpu(pixels) => {
-                self.connection
-                    .image_upload_ring(upload, pixels.bytes(), Instant::now())
-            }
+            RenderImage::Cpu(pixels) => self
+                .connection
+                .image_upload_ring(upload, pixels.bytes(), Instant::now())
+                .map_err(sophia_shell_client::ShellClientError::Image),
             RenderImage::Dma(frame) => {
                 let metadata = sophia_shell_client::ProducerMetadata {
                     offer_id: 0,
@@ -399,7 +423,7 @@ impl<R: ContentRenderer> ShellService<R> {
                         Instant::now(),
                     )
                     .map(|admission| admission.offer)
-                    .map_err(|error| error.error)
+                    .map_err(|error| sophia_shell_client::ShellClientError::Image(error.error))
             }
             RenderImage::RingFill {
                 fill,
@@ -425,36 +449,19 @@ impl<R: ContentRenderer> ShellService<R> {
                 {
                     return Err("owned ring fill became stale before commit".into());
                 }
-                self.connection
-                    .image_commit_ring_fill(fill, target.upload, Instant::now())
+                self.offer_completed_fill(index, target.upload, fill)
             }
         };
         match offered {
-            Ok(offer) => {
-                #[cfg(feature = "diagnostic-cpu-reference")]
-                self.cadence_stamp(&mut pending.timing.ring_commit_and_offer_queued)?;
-                if let Some(stats) = &mut self.statistics {
-                    stats.uploads = stats.uploads.saturating_add(1);
-                    stats.upload_bytes = stats.upload_bytes.saturating_add(byte_len as u64);
-                }
-                if pending.resource.id == 0 {
-                    self.next_resource = self
-                        .next_resource
-                        .checked_add(1)
-                        .ok_or("resource identity exhausted")?;
-                }
-                pending.resource = resource;
-                pending.uploads += 1;
-                pending.upload_bytes += byte_len as u64;
-                self.panels[pending.panel].resources[pending.slot_index].id = resource.id;
-                pending.offer = Some(offer);
-                pending.phase = PresentationPhase::ImageOffered;
-                pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
-                Ok(true)
-            }
+            Ok(offer) => self.record_image_offer(pending, resource, offer, byte_len),
             Err(error) => {
                 use sophia_shell_client::ImageAdapterError;
-                if matches!(error, ImageAdapterError::Busy | ImageAdapterError::Again) {
+                if matches!(
+                    error,
+                    sophia_shell_client::ShellClientError::Image(
+                        ImageAdapterError::Busy | ImageAdapterError::Again
+                    )
+                ) {
                     // A ring slot or control write is busy; the
                     // pixels wait in the pending presentation.
                     #[cfg(feature = "diagnostic-cpu-reference")]
@@ -464,6 +471,35 @@ impl<R: ContentRenderer> ShellService<R> {
                 Err(format!("owned-ring image upload refused: {error:?}"))
             }
         }
+    }
+
+    fn record_image_offer(
+        &mut self,
+        pending: &mut PendingPresentation,
+        resource: ContentResourceId,
+        offer: u64,
+        byte_len: usize,
+    ) -> Result<bool, String> {
+        #[cfg(feature = "diagnostic-cpu-reference")]
+        self.cadence_stamp(&mut pending.timing.ring_commit_and_offer_queued)?;
+        if let Some(stats) = &mut self.statistics {
+            stats.uploads = stats.uploads.saturating_add(1);
+            stats.upload_bytes = stats.upload_bytes.saturating_add(byte_len as u64);
+        }
+        if pending.resource.id == 0 {
+            self.next_resource = self
+                .next_resource
+                .checked_add(1)
+                .ok_or("resource identity exhausted")?;
+        }
+        pending.resource = resource;
+        pending.uploads += 1;
+        pending.upload_bytes += byte_len as u64;
+        self.panels[pending.panel].resources[pending.slot_index].id = resource.id;
+        pending.offer = Some(offer);
+        pending.phase = PresentationPhase::ImageOffered;
+        pending.deadline = Instant::now() + RESPONSE_TIMEOUT;
+        Ok(true)
     }
 
     fn advance_image_offered(&mut self, pending: &mut PendingPresentation) -> Result<bool, String> {
@@ -535,11 +571,19 @@ impl<R: ContentRenderer> ShellService<R> {
         // Dropping a DMA frame is permitted only after CaptureComplete above.
         pending.content = None;
         pending.fill = None;
+        pending.offer = None;
         pending
             .update
             .jobs
             .pop_front()
             .ok_or("settled image has no planned job")?;
+        #[cfg(feature = "experimental-frame-transactions")]
+        if pending.frame.is_some() {
+            if !pending.update.jobs.is_empty() {
+                return Err("SFT admitted more than one new image".into());
+            }
+            return Ok(true);
+        }
         if let Some(job) = pending.update.jobs.front() {
             pending.slot_index = job.slot;
             let slot = self.panels[pending.panel].resources[job.slot];
@@ -562,6 +606,10 @@ impl<R: ContentRenderer> ShellService<R> {
         &mut self,
         pending: &mut PendingPresentation,
     ) -> Result<bool, String> {
+        #[cfg(feature = "experimental-frame-transactions")]
+        if let Some(progressed) = self.frame_before_demand(pending)? {
+            return Ok(progressed);
+        }
         let panel = &self.panels[pending.panel];
         let record = ShellContentRecord::FrameDemand(ContentFrameDemand {
             grant: self.limits.grant,
@@ -688,6 +736,10 @@ impl<R: ContentRenderer> ShellService<R> {
         #[cfg(feature = "diagnostic-cpu-reference")]
         self.cadence_stamp(&mut pending.timing.presented_observed)?;
         pending.phase = PresentationPhase::RetireNeeded;
+        #[cfg(feature = "experimental-frame-transactions")]
+        if pending.frame.is_some() && pending.offer.is_some() {
+            return Ok(true);
+        }
         self.advance_retire_enqueue(pending)
     }
 
@@ -828,79 +880,10 @@ impl<R: ContentRenderer> ShellService<R> {
         permit: ContentFramePermit,
         targets: &[ContentTargetLayout],
     ) -> Result<bool, String> {
-        let panel = &self.panels[panel_index];
-        let reservation_extent = match self.config.position {
-            Position::Top | Position::Bottom => panel.allocation.pixel.height,
-            Position::Left | Position::Right => panel.allocation.pixel.width,
-        };
-        let surface = ContentSurface {
-            allocation: panel.allocation.allocation,
-            scale_generation: panel.allocation.scale_generation,
-            role: PANEL_ROLE,
-            edge: edge(self.config.position),
-            margins: panel.allocation.margins,
-            reservation_extent,
-            parent_surface_index: u16::MAX,
-            anchor_parent_rect: ContentPixelRect::default(),
-        };
-        let placements: Vec<_> = resources
-            .placements()
-            .map(|placement| {
-                let resource = panel.resources[placement.slot];
-                ContentPlacement {
-                    resource: ContentResourceId {
-                        id: resource.id,
-                        generation: resource.generation,
-                    },
-                    surface_index: 0,
-                    destination_x_px: placement.rect.x,
-                    destination_y_px: placement.rect.y,
-                }
-            })
-            .collect();
-        let placement_count = placements.len() as u32;
-        let target_count = u32::try_from(targets.len()).map_err(|_| "target count overflow")?;
-        let begin = ShellContentRecord::CandidateBegin(ContentCandidateBegin {
-            grant: self.limits.grant,
-            candidate_generation: candidate,
-            output: panel.output.output,
-            facts_generation: self.facts.facts_generation,
-            pacing_permit: permit.permit_id,
-            interaction_generation: 1,
-            surface_count: 1,
-            placement_count,
-            target_count,
-        });
-        let chunk = ShellContentRecord::CandidateChunk(ContentCandidateChunk {
-            grant: self.limits.grant,
-            candidate_generation: candidate,
-            chunk_ordinal: 0,
-            surfaces: vec![surface],
-            placements,
-            targets: targets
-                .iter()
-                .map(|target| ContentTarget {
-                    surface_index: 0,
-                    action_kind: 1,
-                    target_id: target.indicator,
-                    target_generation: target.target_generation,
-                    action_id: target.action,
-                    bounds_px: ContentPixelRect {
-                        x: target.x,
-                        y: target.y,
-                        width: target.width,
-                        height: target.height,
-                    },
-                })
-                .collect(),
-        });
-        let end = ShellContentRecord::CandidateEnd(ContentCandidateEnd {
-            grant: self.limits.grant,
-            candidate_generation: candidate,
-            surface_count: 1,
-            placement_count,
-            target_count,
-        });
+        let scene = self.scene(panel_index, resources, candidate, permit.permit_id, targets)?;
+        let begin = ShellContentRecord::CandidateBegin(scene.begin);
+        let chunk = ShellContentRecord::CandidateChunk(scene.chunk);
+        let end = ShellContentRecord::CandidateEnd(scene.end);
         let transaction = self.transaction()?;
         match self.enqueue_candidate(transaction, &[begin, chunk, end]) {
             Ok(()) => {}
